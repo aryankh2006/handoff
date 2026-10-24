@@ -62,17 +62,30 @@ Invalid `acuity` defaults to `"stable"`; missing/invalid ints default to `0`.
 
 ### `POST /arrive/{id}`  → sets `status="arrived"`, `arrived_at=now`. Returns ambulance. 404 if unknown.
 ### `POST /handoff/{id}` → sets `status="handed_off"`, `handoff_at=now` (also sets `arrived_at` if missing). Returns ambulance. 404 if unknown.
-### `POST /reset`        → clears everything, reloads 2 seed ambulances. Returns `/state`.
+### `POST /reset`        → clears everything and reloads the simulated seed: 10 completed handoffs (shift history for
+the stats), Medic 1 already `arrived` ~32 min ago (demo: click "Handed off" on it), and Medic 3 `incoming`. Returns `/state`.
+### `GET|POST /twiml/surge` → TwiML (XML) Twilio fetches when the nurse answers: the latest surge warning, said twice.
 
 ## Surge rule
 - `surge = true` when **≥ 3** ambulances have `status == "incoming"` **and** remaining ETA `<= 20` min,
   where remaining ETA = `eta_min` − minutes since `reported_at` (the same live countdown the board shows).
 - An `incoming` ambulance more than **15 min past** its ETA (never marked arrived) is stale and does not count.
-- When a surge is detected, place **one** outbound Vapi call to the charge nurse, then a **10-minute cooldown**.
-- Outbound call: `POST https://api.vapi.ai/call` with `assistantId=VAPI_NURSE_ASSISTANT_ID`,
-  `phoneNumberId=VAPI_PHONE_NUMBER_ID`, `customer.number=NURSE_PHONE`, and the warning text as
-  `assistantOverrides.firstMessage` (also `assistantOverrides.variableValues.surge_message`).
-- If any Vapi env var is missing → **dry run**: only append to `call_log`.
+- When a surge is detected, place **one** outbound call to the charge nurse, then a **10-minute cooldown**.
+- Outbound call provider, first match wins:
+  1. **Twilio** (primary) — if `NURSE_PHONE`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
+     and `PUBLIC_URL` are all set: `POST https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls.json`
+     (basic auth `TWILIO_ACCOUNT_SID:TWILIO_AUTH_TOKEN`) with `From=TWILIO_PHONE_NUMBER`, `To=NURSE_PHONE`,
+     `Url={PUBLIC_URL}/twiml/surge`. When the nurse answers, Twilio fetches that URL, which reads the warning
+     text aloud twice. (A URL is used because Twilio trial accounts reject inline TwiML.)
+  2. **Vapi** (fallback) — if `NURSE_PHONE`, `VAPI_API_KEY`, `VAPI_PHONE_NUMBER_ID` and `VAPI_NURSE_ASSISTANT_ID`
+     are set: `POST https://api.vapi.ai/call` with `assistantId`, `phoneNumberId`, `customer.number=NURSE_PHONE`,
+     and the warning text as `assistantOverrides.firstMessage`. (Free Vapi numbers are inbound-only, so this
+     usually needs a paid or imported number.)
+  3. **Dry run** — otherwise, only append to `call_log` with a `[DRY RUN]` prefix.
+- Errors never crash the server: the `call_log` entry is prefixed `[TWILIO ERROR …]` or `[VAPI ERROR …]` with
+  the provider's reason.
+- **Twilio trial limits (demo):** only verified numbers can receive calls, and each call starts with a Twilio
+  trial message — the person answering presses any key, then the warning plays.
 
 ## Stats
 - Handoff minutes = `handoff_at - arrived_at` (only ambulances with both set).
