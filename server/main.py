@@ -26,6 +26,9 @@ NURSE_PHONE = os.getenv("NURSE_PHONE", "")
 SURGE_COUNT = 3
 SURGE_ETA_MIN = 20
 SURGE_COOLDOWN = timedelta(minutes=10)
+# An "incoming" ambulance this many minutes past its ETA (never marked arrived) is treated as stale
+# and no longer counts toward a surge, so a forgotten Arrived click can't pin the banner on.
+STALE_AFTER_MIN = 15
 HANDOFF_LIMIT_MIN = 30
 
 app = FastAPI(title="Handoff")
@@ -84,9 +87,22 @@ def seed():
         ambulances[a["id"]] = a
 
 
+def eta_remaining(a: dict) -> float:
+    """Minutes until arrival right now: eta_min counts down from reported_at (negative = overdue)."""
+    elapsed = (now() - datetime.fromisoformat(a["reported_at"])).total_seconds() / 60
+    return a["eta_min"] - elapsed
+
+
+def surge_window() -> list[dict]:
+    """Incoming ambulances arriving within SURGE_ETA_MIN, excluding stale ones long past their ETA."""
+    return [
+        a for a in ambulances.values()
+        if a["status"] == "incoming" and -STALE_AFTER_MIN <= eta_remaining(a) <= SURGE_ETA_MIN
+    ]
+
+
 def is_surge() -> bool:
-    n = sum(1 for a in ambulances.values() if a["status"] == "incoming" and a["eta_min"] <= SURGE_ETA_MIN)
-    return n >= SURGE_COUNT
+    return len(surge_window()) >= SURGE_COUNT
 
 
 def compute_stats() -> dict:
@@ -117,9 +133,9 @@ def state() -> dict:
 
 
 def surge_message() -> str:
-    incoming = [a for a in ambulances.values() if a["status"] == "incoming" and a["eta_min"] <= SURGE_ETA_MIN]
+    incoming = surge_window()
     critical = sum(1 for a in incoming if a["acuity"] == "critical")
-    soonest = min(a["eta_min"] for a in incoming)
+    soonest = max(0, round(min(eta_remaining(a) for a in incoming)))
     return (
         f"Surge warning from Handoff. {len(incoming)} ambulances arriving within {SURGE_ETA_MIN} minutes, "
         f"{critical} critical. First one in {soonest} minutes. Please prepare beds and staff for offload."
@@ -169,12 +185,16 @@ def check_surge(background: BackgroundTasks):
 
 
 def extract_tool_calls(body: dict) -> list[dict] | None:
-    """Return Vapi tool calls if this is a Vapi webhook, else None."""
+    """Return Vapi tool calls if this is a Vapi webhook, else None (plain JSON report).
+
+    A Vapi webhook with no tool calls (status-update, end-of-call-report, ...) returns [] so it is
+    ignored rather than treated as a plain report, which would create an "Unknown unit" card.
+    """
     msg = body.get("message")
     if not isinstance(msg, dict):
         return None
     calls = msg.get("toolCalls") or msg.get("toolCallList")
-    return calls if isinstance(calls, list) else None
+    return calls if isinstance(calls, list) else []
 
 
 def parse_args(call: dict) -> dict:
@@ -196,7 +216,12 @@ def add_report(args: dict) -> dict:
 # ---- endpoints ----
 @app.post("/report")
 async def report(request: Request, background: BackgroundTasks):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be a JSON object")
     tool_calls = extract_tool_calls(body)
     if tool_calls is None:
         a = add_report(body)
