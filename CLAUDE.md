@@ -1,5 +1,7 @@
 # CLAUDE.md — read this first
 
+Read [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) for the why.
+
 ## Project
 **Handoff** lets paramedics call a Vapi voice phone line to report an incoming ambulance (unit, age,
 complaint, stable/critical, ETA). A FastAPI server keeps each report in memory, detects surges
