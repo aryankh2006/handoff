@@ -2,6 +2,15 @@
 
 Goal for the **4:15 PM checkpoint**: a real phone call creates a card on the board.
 
+## Fast path (does steps 2–6 for you)
+With `VAPI_API_KEY` and `PUBLIC_URL` in `.env`:
+```bash
+python voice/setup_vapi.py
+```
+It creates or updates the tool, both assistants, and a free phone number, then writes
+`VAPI_PHONE_NUMBER_ID` and `VAPI_NURSE_ASSISTANT_ID` into `.env`. Run it again whenever the ngrok
+URL or a prompt changes. Restart uvicorn afterwards. The manual steps below are the fallback.
+
 ## 1. Run the server and ngrok
 ```bash
 source .venv/bin/activate
