@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "function": {
+    "name": "submit_report",
+    "description": "Submit an incoming ambulance report to the ER board. Call once you have unit, age, complaint, acuity and ETA.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "unit": { "type": "string", "description": "Ambulance unit name, e.g. 'Medic 12'" },
+        "age": { "type": "integer", "description": "Patient age in years" },
+        "complaint": { "type": "string", "description": "Chief complaint, a few words, e.g. 'chest pain'" },
+        "acuity": { "type": "string", "enum": ["stable", "critical"], "description": "Patient stability" },
+        "eta_min": { "type": "integer", "description": "Minutes until arrival at the ER" }
+      },
+      "required": ["unit", "age", "complaint", "acuity", "eta_min"]
+    }
+  },
+  "server": {
+    "url": "{PUBLIC_URL}/report"
+  },
+  "messages": [
+    { "type": "request-start", "content": "Logging that with the ER now." },
+    { "type": "request-failed", "content": "I couldn't reach the ER board. Please radio the report in directly." }
+  ]
+}

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handoff — ER Board</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #161a20; --text: #f4f6f8; --muted: #9aa4b2;
+    --critical: #ff3b3b; --stable: #ffb020; --ok: #2ecc71; --line: #2a313b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 18px/1.35 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px;
+           border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 32px; letter-spacing: .5px; }
+  #conn { font-size: 15px; color: var(--muted); }
+  #conn.offline { color: var(--stable); }
+  #surge { display: none; background: var(--critical); color: #fff; text-align: center;
+           font-size: 40px; font-weight: 800; padding: 18px; animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { opacity: 1; } to { opacity: .75; } }
+  #stats { padding: 14px 24px; font-size: 24px; font-weight: 600; background: var(--panel);
+           border-bottom: 1px solid var(--line); }
+  #stats .bad { color: var(--critical); }
+  main { display: grid; grid-template-columns: 1fr 360px; gap: 20px; padding: 20px 24px; }
+  h2 { margin: 0 0 12px; font-size: 20px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  #cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 16px; border-left: 12px solid var(--stable); }
+  .card.critical { border-left-color: var(--critical); }
+  .card .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .unit { font-size: 28px; font-weight: 800; }
+  .eta { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .eta.here { color: var(--ok); font-size: 24px; }
+  .who { font-size: 22px; margin: 6px 0; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 6px; font-weight: 800; font-size: 15px;
+         text-transform: uppercase; background: var(--stable); color: #000; }
+  .critical .tag { background: var(--critical); color: #fff; }
+  .status { color: var(--muted); font-size: 15px; margin-left: 8px; }
+  .btns { display: flex; gap: 10px; margin-top: 12px; }
+  button { flex: 1; font-size: 18px; font-weight: 700; padding: 10px; border-radius: 8px; border: 0; cursor: pointer; }
+  button:disabled { opacity: .3; cursor: default; }
+  .arrive { background: #3a7bfd; color: #fff; } .handoff { background: var(--ok); color: #000; }
+  aside .panel { background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 20px; }
+  #calls div { border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 15px; }
+  #calls time { color: var(--muted); display: block; font-size: 13px; }
+  .empty { color: var(--muted); }
+  form { display: grid; gap: 8px; }
+  input, select { font-size: 16px; padding: 8px; border-radius: 6px; border: 1px solid var(--line);
+                  background: #0f1216; color: var(--text); }
+  form button { background: #3a7bfd; color: #fff; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Handoff · ER Board</h1>
+  <span id="conn">connecting…</span>
+</header>
+<div id="surge">⚠ SURGE — 3+ AMBULANCES WITHIN 20 MIN ⚠</div>
+<div id="stats">—</div>
+<main>
+  <section>
+    <h2>Incoming &amp; on the ramp</h2>
+    <div id="cards"></div>
+  </section>
+  <aside>
+    <div class="panel">
+      <h2>Call log</h2>
+      <div id="calls"></div>
+    </div>
+    <details class="panel">
+      <summary><h2 style="display:inline">Manual report</h2></summary>
+      <form id="report">
+        <input name="unit" placeholder="Unit (Medic 12)" required>
+        <input name="age" type="number" placeholder="Age" required>
+        <input name="complaint" placeholder="Complaint" required>
+        <select name="acuity"><option>stable</option><option>critical</option></select>
+        <input name="eta_min" type="number" placeholder="ETA (min)" required>
+        <button>Submit report</button>
+      </form>
+    </details>
+  </aside>
+</main>
+
+<script>
+const API_BASE = "http://localhost:8000";   // change to ngrok URL if the board runs on another machine
+const LIMIT_MIN = 30;                         // California AB 40 offload standard
+
+let state = null;
+let offline = false;
+
+async function poll() {
+  try {
+    const r = await fetch(API_BASE + "/state", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    state = await r.json();
+    offline = false;
+  } catch (e) {
+    offline = true;
+    try { state = await (await fetch("fake_state.json", { cache: "no-store" })).json(); } catch (_) {}
+  }
+  render();
+}
+
+async function act(path) {
+  try { await fetch(API_BASE + path, { method: "POST" }); } catch (e) { alert("Server unreachable"); }
+  poll();
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function etaText(a) {
+  if (a.status !== "incoming") return null;
+  const due = new Date(a.reported_at).getTime() + a.eta_min * 60000;
+  const s = Math.round((due - Date.now()) / 1000);
+  if (s <= 0) return "DUE";
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+function minsSince(iso) { return Math.floor((Date.now() - new Date(iso).getTime()) / 60000); }
+
+function render() {
+  const conn = document.getElementById("conn");
+  conn.textContent = offline ? "OFFLINE — showing fake_state.json" : "live · " + new Date().toLocaleTimeString();
+  conn.className = offline ? "offline" : "";
+  if (!state) return;
+
+  document.getElementById("surge").style.display = state.surge ? "block" : "none";
+
+  const st = state.stats;
+  const bad = (v) => v > LIMIT_MIN ? ` class="bad"` : "";
+  document.getElementById("stats").innerHTML =
+    `Avg handoff <span${bad(st.avg_handoff_min)}>${st.avg_handoff_min} min</span> · ` +
+    `90th pct <span${bad(st.p90_handoff_min)}>${st.p90_handoff_min} min</span> · ` +
+    `Over 30 min: <span${st.over_30_count ? ' class="bad"' : ""}>${st.over_30_count}</span> · ` +
+    `Legal limit: ${LIMIT_MIN} min`;
+
+  const active = state.ambulances.filter(a => a.status !== "handed_off");
+  document.getElementById("cards").innerHTML = active.length ? active.map(a => {
+    const eta = etaText(a);
+    const etaHtml = eta !== null
+      ? `<span class="eta">${eta}</span>`
+      : `<span class="eta here">on ramp ${minsSince(a.arrived_at)}m</span>`;
+    return `<div class="card ${a.acuity === "critical" ? "critical" : ""}">
+      <div class="top"><span class="unit">${esc(a.unit)}</span>${etaHtml}</div>
+      <div class="who">${esc(a.age)} y/o · ${esc(a.complaint)}</div>
+      <span class="tag">${esc(a.acuity)}</span><span class="status">${esc(a.status)}</span>
+      <div class="btns">
+        <button class="arrive" onclick="act('/arrive/${a.id}')" ${a.status !== "incoming" ? "disabled" : ""}>Arrived</button>
+        <button class="handoff" onclick="act('/handoff/${a.id}')">Handed off</button>
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty">No ambulances incoming.</div>`;
+
+  const calls = [...state.call_log].reverse();
+  document.getElementById("calls").innerHTML = calls.length
+    ? calls.map(c => `<div><time>${new Date(c.time).toLocaleTimeString()} → ${esc(c.to)}</time>${esc(c.message)}</div>`).join("")
+    : `<div class="empty">No calls yet.</div>`;
+}
+
+document.getElementById("report").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = Object.fromEntries(f);
+  body.age = +body.age; body.eta_min = +body.eta_min;
+  try {
+    await fetch(API_BASE + "/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    e.target.reset();
+  } catch (_) { alert("Server unreachable"); }
+  poll();
+});
+
+poll();
+setInterval(poll, 2000);
+setInterval(render, 1000);  // smooth ETA countdown between polls
+</script>
+</body>
+</html>
