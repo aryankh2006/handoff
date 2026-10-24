@@ -5,7 +5,10 @@ Creates or updates (by name):
   - assistant  "Handoff Paramedic Line"     (from paramedic_assistant_prompt.md)
   - assistant  "Handoff Charge Nurse Alert" (from nurse_assistant_prompt.md)
   - a free Vapi phone number, inbound -> Paramedic Line
-Then writes VAPI_PHONE_NUMBER_ID and VAPI_NURSE_ASSISTANT_ID into .env.
+  - optional: your Twilio number imported into Vapi for OUTBOUND (free Vapi numbers are inbound only),
+    when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER are set in .env
+Then writes VAPI_PHONE_NUMBER_ID (Twilio number if imported, else the free number) and
+VAPI_NURSE_ASSISTANT_ID into .env.
 Re-run whenever the ngrok URL or a prompt changes.
 """
 import json
@@ -30,6 +33,9 @@ AREA_CODE = "619"  # San Diego; falls back to any area code if unavailable
 env = dotenv_values(ENV_PATH)
 API_KEY = (env.get("VAPI_API_KEY") or "").strip()
 PUBLIC_URL = (env.get("PUBLIC_URL") or "").strip().rstrip("/")
+TWILIO_SID = (env.get("TWILIO_ACCOUNT_SID") or "").strip()
+TWILIO_TOKEN = (env.get("TWILIO_AUTH_TOKEN") or "").strip()
+TWILIO_NUMBER = (env.get("TWILIO_PHONE_NUMBER") or "").strip()  # E.164, e.g. +16195551234
 if not API_KEY or not PUBLIC_URL:
     sys.exit("Set VAPI_API_KEY and PUBLIC_URL in .env first.")
 
@@ -50,7 +56,7 @@ def find_by_name(path: str, name: str, key=lambda x: x.get("name")) -> dict | No
 def upsert(path: str, name: str, body: dict, key=lambda x: x.get("name")) -> dict:
     existing = find_by_name(path, name, key)
     if existing:
-        body = {k: v for k, v in body.items() if k != "type"}  # type is immutable on PATCH
+        body = {k: v for k, v in body.items() if k not in ("type", "provider")}  # immutable on PATCH
         out = call("PATCH", f"{path}/{existing['id']}", body)
         print(f"updated {path} {name!r}: {out['id']}")
     else:
@@ -113,8 +119,8 @@ first, system = read_prompt("nurse_assistant_prompt.md")
 nurse = upsert("/assistant", NURSE_NAME,
                assistant_body(NURSE_NAME, first, system, [], "Thank you. The board is updated. Goodbye."))
 
-# 4. Phone number: reuse any existing one (prefer ours), else create a free Vapi number
-numbers = call("GET", "/phone-number")
+# 4. Inbound: free Vapi number. Reuse an existing one (prefer ours), else create one
+numbers = [n for n in call("GET", "/phone-number") if n.get("provider") == "vapi"]
 phone = next((n for n in numbers if n.get("name") == NUMBER_NAME), None) or (numbers[0] if numbers else None)
 if phone:
     phone = call("PATCH", f"/phone-number/{phone['id']}", {"assistantId": paramedic["id"]})
@@ -136,13 +142,23 @@ for _ in range(15):
     time.sleep(2)
     phone = call("GET", f"/phone-number/{phone['id']}")
 
-update_env({"VAPI_PHONE_NUMBER_ID": phone["id"], "VAPI_NURSE_ASSISTANT_ID": nurse["id"]})
+# 5. Outbound: import Twilio number (if configured). Inbound calls to it also reach the Paramedic Line.
+outbound = phone
+if TWILIO_SID and TWILIO_TOKEN and TWILIO_NUMBER:
+    twilio_body = {"provider": "twilio", "number": TWILIO_NUMBER, "name": "Handoff Outbound (Twilio)",
+                   "twilioAccountSid": TWILIO_SID, "twilioAuthToken": TWILIO_TOKEN,
+                   "assistantId": paramedic["id"]}
+    outbound = upsert("/phone-number", TWILIO_NUMBER, twilio_body, key=lambda x: x.get("number"))
+else:
+    print("TWILIO_* not set in .env: outbound uses the free Vapi number, which Vapi blocks (inbound only)")
+
+update_env({"VAPI_PHONE_NUMBER_ID": outbound["id"], "VAPI_NURSE_ASSISTANT_ID": nurse["id"]})
 
 print()
 print(f"Tool server URL:      {PUBLIC_URL}/report")
 print(f"Paramedic assistant:  {paramedic['id']}")
 print(f"Nurse assistant:      {nurse['id']}  (written to .env)")
-print(f"Phone number ID:      {phone['id']}  (written to .env)")
+print(f"Outbound number:      {outbound.get('number')} ({outbound.get('provider')}) {outbound['id']}  (VAPI_PHONE_NUMBER_ID)")
 print(f"Phone status:         {phone.get('status')}")
-print(f"CALL THIS NUMBER:     {phone.get('number') or '(not assigned yet - re-run in a minute)'}")
+print(f"Inbound - CALL THIS:  {phone.get('number') or '(not assigned yet - re-run in a minute)'}")
 print("Restart uvicorn so the server picks up the new .env values.")

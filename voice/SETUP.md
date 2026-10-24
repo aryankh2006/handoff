@@ -11,6 +11,11 @@ It creates or updates the tool, both assistants, and a free phone number, then w
 `VAPI_PHONE_NUMBER_ID` and `VAPI_NURSE_ASSISTANT_ID` into `.env`. Run it again whenever the ngrok
 URL or a prompt changes. Restart uvicorn afterwards. The manual steps below are the fallback.
 
+**Outbound nurse call needs a Twilio number** (free Vapi numbers are inbound only). Add to `.env`:
+`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` (E.164), then re-run the script. It
+imports the Twilio number and sets it as `VAPI_PHONE_NUMBER_ID`; the free number stays for inbound.
+Twilio trial accounts can only call verified numbers, so verify `NURSE_PHONE` in the Twilio console.
+
 ## 1. Run the server and ngrok
 ```bash
 source .venv/bin/activate
