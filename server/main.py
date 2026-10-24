@@ -78,13 +78,34 @@ def seed():
     call_log.clear()
     last_surge_call = None
     t = now()
-    # Already handed off, slow handoff (42 min) so stats show an AB 40 violation.
-    done = make_ambulance("Medic 7", 81, "hip fracture after fall", "stable", 10, t - timedelta(minutes=70))
-    done.update(status="handed_off", arrived_at=iso(t - timedelta(minutes=60)), handoff_at=iso(t - timedelta(minutes=18)))
-    # Currently incoming.
-    inc = make_ambulance("Medic 3", 54, "shortness of breath", "critical", 12)
-    for a in (done, inc):
+    # SIMULATED earlier-tonight shift: 10 completed handoffs so the stats strip tells the story
+    # (avg 34.2, p90 58, 4 of 10 over the 30-min AB 40 limit). Hidden from the board's cards.
+    # (unit, age, complaint, acuity, arrived N min ago, handoff took M min)
+    history = [
+        ("Medic 2", 81, "hip fracture after fall", "stable", 245, 9),
+        ("Medic 4", 29, "allergic reaction", "stable", 220, 14),
+        ("Medic 5", 66, "dizziness", "stable", 200, 19),
+        ("Medic 6", 47, "back pain", "stable", 185, 23),
+        ("Medic 8", 74, "fall, head strike", "stable", 165, 26),
+        ("Medic 10", 58, "diabetic emergency", "critical", 150, 28),
+        ("Medic 11", 39, "seizure", "critical", 140, 38),
+        ("Medic 16", 70, "chest pain", "critical", 130, 46),
+        ("Medic 18", 85, "weakness", "stable", 120, 58),
+        ("Medic 7", 62, "shortness of breath", "stable", 110, 81),
+    ]
+    for unit, age, complaint, acuity, arrived_ago, took in history:
+        a = make_ambulance(unit, age, complaint, acuity, 12, t - timedelta(minutes=arrived_ago + 12))
+        a.update(status="handed_off", arrived_at=iso(t - timedelta(minutes=arrived_ago)),
+                 handoff_at=iso(t - timedelta(minutes=arrived_ago - took)))
         ambulances[a["id"]] = a
+    # Waiting on the ramp ~32 min (already over the limit). Demo step 5: click "Handed off" on THIS card
+    # so a 30+ min handoff is logged live and "Over 30" ticks up.
+    wall = make_ambulance("Medic 1", 77, "chest pain", "stable", 9, t - timedelta(minutes=41))
+    wall.update(status="arrived", arrived_at=iso(t - timedelta(minutes=32)))
+    ambulances[wall["id"]] = wall
+    # Currently incoming (counts toward a surge; goes stale ~27 min after /reset).
+    inc = make_ambulance("Medic 3", 54, "shortness of breath", "critical", 12)
+    ambulances[inc["id"]] = inc
 
 
 def eta_remaining(a: dict) -> float:
