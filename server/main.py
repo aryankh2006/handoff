@@ -150,8 +150,12 @@ def place_nurse_call(message: str):
             timeout=15,
         )
         if r.status_code >= 300:
-            entry["message"] = f"[VAPI ERROR {r.status_code}] {message}"
-            print("Vapi call failed:", r.status_code, r.text)
+            try:
+                reason = r.json().get("message", r.text)
+            except ValueError:
+                reason = r.text
+            entry["message"] = f"[VAPI ERROR {r.status_code}: {reason}] {message}"
+            print(f"Vapi call failed: {r.status_code}\n  response body: {r.text}")
     except Exception as e:  # never break the demo on a network error
         entry["message"] = f"[VAPI ERROR] {message}"
         print("Vapi call exception:", e)
