@@ -1,4 +1,4 @@
-"""Handoff server: in-memory ambulance reports, surge detection, outbound Vapi nurse call.
+"""Handoff server: in-memory ambulance reports, surge detection, outbound nurse call (Twilio, else Vapi).
 
 Implements contract.md. Run from repo root: uvicorn server.main:app --reload --port 8000
 """
@@ -8,10 +8,11 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +23,10 @@ VAPI_API_KEY = os.getenv("VAPI_API_KEY", "")
 VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
 VAPI_NURSE_ASSISTANT_ID = os.getenv("VAPI_NURSE_ASSISTANT_ID", "")
 NURSE_PHONE = os.getenv("NURSE_PHONE", "")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "").strip()
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip().rstrip("/")
 
 SURGE_COUNT = 3
 SURGE_ETA_MIN = 20
@@ -38,6 +43,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 ambulances: dict[str, dict] = {}
 call_log: list[dict] = []
 last_surge_call: datetime | None = None
+last_surge_message = "Surge warning from Handoff. Please check the Handoff board."
 
 
 def now() -> datetime:
@@ -164,16 +170,25 @@ def surge_message() -> str:
 
 
 def place_nurse_call(message: str):
-    """Runs as a background task so the Vapi tool response stays fast."""
+    """Runs as a background task so the Vapi tool response stays fast.
+
+    Twilio (plays /twiml/surge) if TWILIO_* + PUBLIC_URL are set, else Vapi, else dry run.
+    Free Vapi numbers are inbound only, and Twilio trial accounts reject inline Twiml, hence the URL.
+    """
+    global last_surge_message
+    last_surge_message = message
     entry = {"time": iso(now()), "to": NURSE_PHONE or "(dry run)", "message": message}
-    if not (VAPI_API_KEY and VAPI_PHONE_NUMBER_ID and VAPI_NURSE_ASSISTANT_ID and NURSE_PHONE):
-        entry["message"] = "[DRY RUN] " + message
-        call_log.append(entry)
-        print("DRY RUN nurse call:", message)
-        return
-    try:
-        r = httpx.post(
-            "https://api.vapi.ai/call",
+    if NURSE_PHONE and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER and PUBLIC_URL:
+        provider = "TWILIO"
+        request = dict(
+            url=f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls.json",
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            data={"From": TWILIO_PHONE_NUMBER, "To": NURSE_PHONE, "Url": f"{PUBLIC_URL}/twiml/surge"},
+        )
+    elif NURSE_PHONE and VAPI_API_KEY and VAPI_PHONE_NUMBER_ID and VAPI_NURSE_ASSISTANT_ID:
+        provider = "VAPI"
+        request = dict(
+            url="https://api.vapi.ai/call",
             headers={"Authorization": f"Bearer {VAPI_API_KEY}"},
             json={
                 "assistantId": VAPI_NURSE_ASSISTANT_ID,
@@ -184,18 +199,26 @@ def place_nurse_call(message: str):
                     "variableValues": {"surge_message": message},
                 },
             },
-            timeout=15,
         )
+    else:
+        entry["message"] = "[DRY RUN] " + message
+        call_log.append(entry)
+        print("DRY RUN nurse call:", message)
+        return
+    try:
+        r = httpx.post(**request, timeout=15)
         if r.status_code >= 300:
             try:
                 reason = r.json().get("message", r.text)
             except ValueError:
                 reason = r.text
-            entry["message"] = f"[VAPI ERROR {r.status_code}: {reason}] {message}"
-            print(f"Vapi call failed: {r.status_code}\n  response body: {r.text}")
+            entry["message"] = f"[{provider} ERROR {r.status_code}: {reason}] {message}"
+            print(f"{provider} call failed: {r.status_code}\n  response body: {r.text}")
+        else:
+            print(f"{provider} nurse call placed to {NURSE_PHONE}")
     except Exception as e:  # never break the demo on a network error
-        entry["message"] = f"[VAPI ERROR] {message}"
-        print("Vapi call exception:", e)
+        entry["message"] = f"[{provider} ERROR: {e}] {message}"
+        print(f"{provider} call exception:", e)
     call_log.append(entry)
 
 
@@ -290,6 +313,14 @@ def handoff(amb_id: str):
     a["arrived_at"] = a["arrived_at"] or iso(now())
     a["handoff_at"] = iso(now())
     return a
+
+
+@app.api_route("/twiml/surge", methods=["GET", "POST"])
+def twiml_surge():
+    """TwiML Twilio fetches when the nurse answers: the latest surge message, said twice."""
+    msg = escape(last_surge_message)
+    xml = f'<Response><Say voice="Polly.Joanna">{msg}</Say><Pause length="1"/><Say voice="Polly.Joanna">{msg}</Say></Response>'
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.post("/reset")
