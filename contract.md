@@ -65,7 +65,9 @@ Invalid `acuity` defaults to `"stable"`; missing/invalid ints default to `0`.
 ### `POST /reset`        → clears everything, reloads 2 seed ambulances. Returns `/state`.
 
 ## Surge rule
-- `surge = true` when **≥ 3** ambulances have `status == "incoming"` **and** `eta_min <= 20`.
+- `surge = true` when **≥ 3** ambulances have `status == "incoming"` **and** remaining ETA `<= 20` min,
+  where remaining ETA = `eta_min` − minutes since `reported_at` (the same live countdown the board shows).
+- An `incoming` ambulance more than **15 min past** its ETA (never marked arrived) is stale and does not count.
 - When a surge is detected, place **one** outbound Vapi call to the charge nurse, then a **10-minute cooldown**.
 - Outbound call: `POST https://api.vapi.ai/call` with `assistantId=VAPI_NURSE_ASSISTANT_ID`,
   `phoneNumberId=VAPI_PHONE_NUMBER_ID`, `customer.number=NURSE_PHONE`, and the warning text as
