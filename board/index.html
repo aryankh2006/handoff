@@ -3,179 +3,1020 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Handoff — ER Board</title>
+<title>Handoff · ER arrivals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap">
+<!--
+  HANDOFF ER board (owner: Simi). Single self-contained file, no build step.
+  Served by FastAPI at /board/.
+
+  URL options:
+    ?demo=1            built-in fake data, no server needed. Header shows "Demo data".
+    ?phone=6195550100  show the paramedic call-in number in the header
+    ?hospital=Name     hospital name in the header
+    ?api=http://host   API base if the board is not served by the same server
+    ?debug=1           show the raw JSON from the server (bottom left)
+
+  Keys: F full screen · S sound · Shift+R reset · N add fake call (demo only)
+  API wiring lives in CONFIG + normalize() below. Edit there, nowhere else.
+-->
 <style>
-  :root {
-    --bg: #0b0d10; --panel: #161a20; --text: #f4f6f8; --muted: #9aa4b2;
-    --critical: #ff3b3b; --stable: #ffb020; --ok: #2ecc71; --line: #2a313b;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 18px/1.35 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px;
-           border-bottom: 1px solid var(--line); }
-  h1 { margin: 0; font-size: 32px; letter-spacing: .5px; }
-  #conn { font-size: 15px; color: var(--muted); }
-  #conn.offline { color: var(--stable); }
-  #surge { display: none; background: var(--critical); color: #fff; text-align: center;
-           font-size: 40px; font-weight: 800; padding: 18px; animation: pulse 1s infinite alternate; }
-  @keyframes pulse { from { opacity: 1; } to { opacity: .75; } }
-  #stats { padding: 14px 24px; font-size: 24px; font-weight: 600; background: var(--panel);
-           border-bottom: 1px solid var(--line); }
-  #stats .bad { color: var(--critical); }
-  main { display: grid; grid-template-columns: 1fr 360px; gap: 20px; padding: 20px 24px; }
-  h2 { margin: 0 0 12px; font-size: 20px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-  #cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-  .card { background: var(--panel); border-radius: 12px; padding: 16px; border-left: 12px solid var(--stable); }
-  .card.critical { border-left-color: var(--critical); }
-  .card .top { display: flex; justify-content: space-between; align-items: baseline; }
-  .unit { font-size: 28px; font-weight: 800; }
-  .eta { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .eta.here { color: var(--ok); font-size: 24px; }
-  .who { font-size: 22px; margin: 6px 0; }
-  .tag { display: inline-block; padding: 2px 10px; border-radius: 6px; font-weight: 800; font-size: 15px;
-         text-transform: uppercase; background: var(--stable); color: #000; }
-  .critical .tag { background: var(--critical); color: #fff; }
-  .status { color: var(--muted); font-size: 15px; margin-left: 8px; }
-  .btns { display: flex; gap: 10px; margin-top: 12px; }
-  button { flex: 1; font-size: 18px; font-weight: 700; padding: 10px; border-radius: 8px; border: 0; cursor: pointer; }
-  button:disabled { opacity: .3; cursor: default; }
-  .arrive { background: #3a7bfd; color: #fff; } .handoff { background: var(--ok); color: #000; }
-  aside .panel { background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 20px; }
-  #calls div { border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 15px; }
-  #calls time { color: var(--muted); display: block; font-size: 13px; }
-  .empty { color: var(--muted); }
-  form { display: grid; gap: 8px; }
-  input, select { font-size: 16px; padding: 8px; border-radius: 6px; border: 1px solid var(--line);
-                  background: #0f1216; color: var(--text); }
-  form button { background: #3a7bfd; color: #fff; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+:root{
+  --navy:#162e51;
+  --blue:#005ea2;
+  --blue-dark:#1a4480;
+  --blue-bg:#e7f2f8;
+  --blue-line:#c3dcec;
+  --bg:#eef0f2;
+  --surface:#ffffff;
+  --text:#1f1f1f;
+  --text2:#5b5b5b;
+  --text3:#8a8a8a;
+  --line:#e6e3dd;
+  --line2:#d3cfc7;
+  --hover:#f3f1ed;
+  --track:#ebe8e2;
+  --red:#b42318;
+  --red-bg:#fdecea;
+  --amber:#955800;
+  --amber-bg:#fff1d6;
+  --green:#1d7a3a;
+  --green-bg:#e5f3e9;
+  --new:#fff5c9;
+  --font:"Source Sans 3","Source Sans Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none !important}
+html{font-size:clamp(13px, min(0.6vw + 7px, 1.3vh + 5px), 23px)}
+html,body{height:100%}
+body{font-family:var(--font);color:var(--text);background:var(--bg);display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;gap:1.4rem;padding:.7rem 1.5rem;background:var(--navy);color:#fff;border-bottom:4px solid var(--blue)}
+.brand{display:flex;align-items:baseline;gap:.85rem;min-width:0}
+.wordmark{font-size:1.55rem;font-weight:700;letter-spacing:-.01em}
+.sub{font-size:.95rem;color:#c9d6e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grow{flex:1}
+.callin{font-size:.95rem;color:#c9d6e8;white-space:nowrap}
+.callin b{color:#fff;font-weight:700;margin-left:.25rem}
+.status{display:inline-flex;align-items:center;gap:.4rem;font-size:.92rem;font-weight:600;color:#9be3ad;white-space:nowrap}
+.status .dot{width:.55rem;height:.55rem;border-radius:50%;background:currentColor}
+.status.off{color:#ffd27a}
+.status.demo{color:#dfe8f2}
+.status.demo .dot{background:#9fb3cc}
+.hbtns{display:flex;gap:.4rem}
+.hbtn{font-size:.86rem;padding:.32rem .75rem;border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;border-radius:4px;white-space:nowrap}
+.hbtn:hover{background:rgba(255,255,255,.12)}
+.hbtn.on{background:#fff;color:var(--navy);border-color:#fff}
+.clock{font-size:1.5rem;font-weight:600;white-space:nowrap}
+
+/* ---------- surge alert ---------- */
+.surge{display:none;align-items:center;gap:1.5rem;padding:.8rem 1.5rem;background:var(--red);color:#fff}
+.surge.on{display:flex}
+.surge-title{font-size:1.45rem;font-weight:700;line-height:1.2}
+.surge-text{font-size:1.02rem;margin-top:.15rem}
+.surge-call{margin-left:auto;font-size:.95rem;font-weight:600;padding:.45rem .85rem;border:1px solid rgba(255,255,255,.65);border-radius:4px;white-space:nowrap}
+
+/* ---------- arrivals timeline ---------- */
+.wave{margin:.8rem 1.25rem 0;padding:.55rem 1.1rem .25rem;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.wave-head{display:flex;gap:1rem;align-items:baseline;font-size:.88rem;color:var(--text2)}
+.wave-head .title{font-weight:600;color:var(--text)}
+.wave-count{margin-left:auto}
+.wave-count.hot{color:var(--red);font-weight:600}
+.track{position:relative;height:4.3rem;margin-top:.15rem}
+.axis{position:absolute;left:0;right:0;bottom:1.2rem;height:1px;background:var(--line2)}
+.window{position:absolute;left:0;bottom:1.2rem;height:3.1rem;background:#f1efea;border-radius:3px 3px 0 0}
+.window span{position:absolute;left:.5rem;top:.25rem;font-size:.74rem;color:var(--text3)}
+.window.hot{background:var(--red-bg)}
+.window.hot span{color:var(--red)}
+.tick{position:absolute;bottom:0;transform:translateX(-50%);font-size:.74rem;color:var(--text3);white-space:nowrap}
+.tick.first{transform:none}
+.tick.last{transform:translateX(-100%)}
+.mk{position:absolute;bottom:1.2rem;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:1}
+.mk .chip{font-size:.76rem;font-weight:600;padding:.06rem .4rem;background:var(--surface);border:1px solid var(--line2);border-radius:3px;white-space:nowrap}
+.mk .chip i{font-style:normal;font-weight:400;color:var(--text2)}
+.mk .stem{width:1px;height:.35rem;background:var(--line2)}
+.mk.r1 .stem{height:1.3rem} .mk.r2 .stem{height:2.05rem}
+.mk .pin{width:.7rem;height:.7rem;border-radius:50%;background:var(--text3);border:2px solid var(--surface);margin-bottom:-.35rem}
+.mk.crit .pin{background:var(--red)}
+.mk.serious .pin{background:#d98a00}
+.mk.stable .pin{background:var(--green)}
+.mk.new .chip{background:var(--new);border-color:#e6d27a}
+
+/* ---------- columns ---------- */
+main{flex:1;min-height:0;display:grid;grid-template-columns:1.3fr 1fr .95fr;gap:1rem;padding:.8rem 1.25rem}
+.col{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.col-head{display:flex;align-items:baseline;gap:.55rem;padding:.65rem 1.25rem .55rem;background:var(--blue-bg);border-bottom:1px solid var(--blue-line)}
+.col-head h2{font-size:1.15rem;font-weight:700;color:var(--navy)}
+.col-head .count{font-size:.85rem;font-weight:700;color:#fff;background:var(--blue-dark);border-radius:999px;padding:.05rem .55rem;align-self:center}
+.col-head .hint{margin-left:auto;font-size:.88rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list{flex:1;min-height:0;overflow-y:auto}
+
+/* ---------- ambulance rows ---------- */
+.card{display:grid;grid-template-columns:1fr auto;grid-template-areas:"top cd" "pt cd" "meta act";column-gap:1rem;row-gap:.3rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--line);transition:background-color 1.5s ease}
+.card.new{background:var(--new)}
+.top{grid-area:top;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;min-width:0}
+.unit{font-size:1.28rem;font-weight:700;white-space:nowrap}
+.badge{font-size:.78rem;font-weight:600;padding:.1rem .45rem;border-radius:3px;background:#efede8;color:var(--text2);white-space:nowrap}
+.badge.crit{background:var(--red-bg);color:var(--red)}
+.badge.serious{background:var(--amber-bg);color:var(--amber)}
+.badge.stable{background:var(--green-bg);color:var(--green)}
+.badge.new{background:#ffe27a;color:#4d3c00}
+.badge.over{display:none;background:var(--red);color:#fff}
+.pt{grid-area:pt;font-size:1.02rem;min-width:0}
+.pt .sep{color:var(--text3);margin:0 .35rem}
+.pt .pending{color:var(--text3)}
+.cdbox{grid-area:cd;text-align:right}
+.cd{font-size:2.15rem;font-weight:650;line-height:1.05;letter-spacing:-.01em}
+.cdl{font-size:.8rem;color:var(--text2);margin-top:.12rem;white-space:nowrap}
+.card.in.soon .cd,.card.in.due .cd{color:var(--amber)}
+.meta{grid-area:meta;align-self:center;min-width:0;font-size:.86rem;color:var(--text2)}
+.quote{font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.act{grid-area:act;justify-self:end;align-self:end}
+.btn{font-size:.95rem;font-weight:700;padding:.45rem 1rem;border-radius:4px;border:2px solid var(--blue);background:var(--surface);color:var(--blue);white-space:nowrap}
+.btn:hover{background:var(--blue-bg)}
+.btn.handoff{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.handoff:hover{background:var(--blue-dark);border-color:var(--blue-dark)}
+.btn[disabled]{opacity:.5;cursor:default}
+.barwrap{display:flex;align-items:center;gap:.5rem}
+.bar{flex:1;position:relative;height:.42rem;background:var(--track);border-radius:2px;overflow:hidden}
+.bar .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--green);transition:width .5s linear}
+.barl{font-size:.76rem;color:var(--text3);white-space:nowrap}
+.card.door.warn .fill{background:#d98a00}
+.card.door.warn .cd{color:var(--amber)}
+.card.door.over{background:#fff6f5}
+.card.door.over .fill{background:var(--red)}
+.card.door.over .cd{color:var(--red)}
+.card.door.over .badge.over{display:inline-block}
+.done-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:.75rem;align-items:baseline;padding:.5rem 1.25rem;border-bottom:1px solid var(--line);font-size:.92rem}
+.done-row .u{font-weight:600;white-space:nowrap}
+.done-row .c{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.done-row .t{font-weight:600}
+.done-row .m{font-size:.8rem;color:var(--green);min-width:4.6rem;text-align:right;white-space:nowrap}
+.done-row.bad .t,.done-row.bad .m{color:var(--red)}
+
+/* ---------- compliance summary ---------- */
+.stats{padding:.85rem 1.25rem 1rem;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:.45rem;flex:none}
+.stats h3{font-size:1rem;font-weight:700;color:var(--navy)}
+.big{display:flex;align-items:center;gap:.75rem}
+.big-num{font-size:3.4rem;font-weight:700;line-height:1;letter-spacing:-.02em}
+.big-num.none{color:var(--text3)}
+.big-num.bad{color:var(--red)}
+.pill{font-size:.8rem;font-weight:600;padding:.15rem .5rem;border-radius:3px}
+.pill.ok{background:var(--green-bg);color:var(--green)}
+.pill.bad{background:var(--red-bg);color:var(--red)}
+.gauge{position:relative;height:.45rem;background:var(--track);border-radius:2px;margin-top:.25rem}
+.gauge .g{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--green);border-radius:2px;transition:width .6s}
+.gauge .g.bad{background:var(--red)}
+.gauge .tgt{position:absolute;top:-.25rem;bottom:-.25rem;width:2px;background:var(--text)}
+.gauge-l{position:relative;height:1.05rem;font-size:.74rem;color:var(--text2)}
+.gauge-l span{position:absolute;top:.1rem;transform:translateX(-100%);white-space:nowrap}
+.stat-sub{font-size:.9rem;color:var(--text2)}
+.dl{display:grid;grid-template-columns:1fr auto;border-top:1px solid var(--line);margin-top:.2rem}
+.dl dt,.dl dd{padding:.42rem 0;border-bottom:1px solid var(--line)}
+.dl dt{font-size:.88rem;color:var(--text2)}
+.dl dt small{display:block;font-size:.76rem;color:var(--text3)}
+.dl dd{font-size:1.02rem;font-weight:600;text-align:right;align-self:stretch;display:flex;align-items:center;justify-content:flex-end;padding-left:1rem}
+.dl dd.bad{color:var(--red)}
+.chart-l{font-size:.85rem;color:var(--text2);margin-top:.3rem}
+.chart{position:relative;height:3.3rem;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid var(--line2)}
+.chart .b{flex:1;max-width:1.6rem;background:#8dbb9b;border-radius:2px 2px 0 0}
+.chart .b.bad{background:var(--red)}
+.chart .lim{position:absolute;left:0;right:0;border-top:1px dashed var(--red);pointer-events:none}
+.chart .lim span{position:absolute;right:0;top:-1.05rem;font-size:.72rem;color:var(--red)}
+.chart .none{align-self:center;font-size:.85rem;color:var(--text3)}
+
+/* ---------- empty states, footer, overlays ---------- */
+.empty{padding:1.1rem 1.25rem;color:var(--text2);font-size:.95rem;line-height:1.45;max-width:30rem}
+.empty b{color:var(--text);font-weight:600}
+footer{display:flex;align-items:center;gap:1.25rem;padding:.4rem 1.5rem;background:var(--navy);font-size:.8rem;color:#c9d6e8;white-space:nowrap;overflow:hidden}
+footer .err{color:#ffb4a8;overflow:hidden;text-overflow:ellipsis}
+kbd{font-family:inherit;font-size:.74rem;border:1px solid rgba(255,255,255,.45);border-radius:3px;padding:0 .3rem;color:#fff}
+#toasts{position:fixed;right:1rem;bottom:2.4rem;display:flex;flex-direction:column;gap:.5rem;z-index:60;align-items:flex-end}
+.toast{max-width:30rem;background:var(--surface);border:1px solid var(--line2);border-left:3px solid var(--amber);border-radius:4px;padding:.6rem .85rem;font-size:.88rem}
+#debug{position:fixed;left:.6rem;bottom:2.2rem;width:min(34rem,45vw);max-height:40vh;overflow:auto;background:var(--surface);border:1px solid var(--line2);border-radius:4px;padding:.6rem;font:11px/1.35 Menlo,Consolas,monospace;color:var(--text);z-index:70;white-space:pre-wrap;display:none}
+
+@media (max-width:1100px){
+  main{grid-template-columns:1fr 1fr}
+  .col-stats{grid-column:1 / -1}
+  .sub{display:none}
+}
+@media (max-width:760px){
+  html,body{height:auto}
+  body{overflow:auto}
+  main{grid-template-columns:1fr}
+  .col{min-height:12rem}
+  .callin,.wave,.hbtns{display:none}
+  .list{overflow:visible}
+  .surge{flex-wrap:wrap}
+  .surge-call{margin-left:0}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none !important}
+}
 </style>
 </head>
 <body>
+
 <header>
-  <h1>Handoff · ER Board</h1>
-  <span id="conn">connecting…</span>
+  <div class="brand">
+    <span class="wordmark">Handoff</span>
+    <span class="sub" id="hospital">ER arrivals</span>
+  </div>
+  <div class="grow"></div>
+  <div class="callin" id="callin" hidden>Paramedics call<b id="phone"></b></div>
+  <span class="status off" id="conn"><span class="dot"></span><span id="connText">Connecting…</span></span>
+  <div class="hbtns"><button class="hbtn" id="soundBtn">Sound: off</button><button class="hbtn" id="fsBtn">Full screen</button></div>
+  <div class="clock" id="clock"></div>
 </header>
-<div id="surge">⚠ SURGE — 3+ AMBULANCES WITHIN 20 MIN ⚠</div>
-<div id="stats">—</div>
-<main>
-  <section>
-    <h2>Incoming &amp; on the ramp</h2>
-    <div id="cards"></div>
+
+<section class="surge" id="surge" aria-live="assertive">
+  <div>
+    <div class="surge-title" id="surgeTitle">Surge</div>
+    <div class="surge-text">Put a nurse at the ambulance door.</div>
+  </div>
+  <div class="surge-call" id="surgeCall"></div>
+</section>
+
+<section class="wave">
+  <div class="wave-head">
+    <span class="title">Arrivals in the next <span id="waveMin">30</span> minutes</span>
+    <span class="wave-count" id="waveCount"></span>
+  </div>
+  <div class="track">
+    <div class="window" id="window"><span id="windowLabel">Next 20 min</span></div>
+    <div class="axis"></div>
+    <div id="ticks"></div>
+    <div id="markers"></div>
+  </div>
+</section>
+
+<main id="main">
+  <section class="col col-in">
+    <div class="col-head"><h2>Inbound</h2><span class="count" id="cIn">0</span><span class="hint">Soonest first</span></div>
+    <div class="list" id="listIn"></div>
   </section>
-  <aside>
-    <div class="panel">
-      <h2>Call log</h2>
-      <div id="calls"></div>
+  <section class="col col-door">
+    <div class="col-head"><h2>At the door</h2><span class="count" id="cDoor">0</span><span class="hint" id="doorHint">Waiting for a nurse</span></div>
+    <div class="list" id="listDoor"></div>
+  </section>
+  <section class="col col-stats">
+    <div class="stats">
+      <h3>Handed off within <span id="limA">30</span> minutes, today</h3>
+      <div class="big"><div class="big-num none" id="sPct">–</div><span class="pill" id="sPill" hidden></span></div>
+      <div class="gauge"><div class="g" id="gauge"></div><div class="tgt" id="tgt"></div></div>
+      <div class="gauge-l"><span id="tgtL">State target 90%</span></div>
+      <div class="stat-sub" id="sPctSub"></div>
+      <dl class="dl">
+        <dt>90th percentile wait</dt><dd id="sP90">–</dd>
+        <dt>Median wait</dt><dd id="sMed">–</dd>
+        <dt id="baseK">UCSD Medical Center, Jan 2026<small>90th percentile, state data</small></dt><dd id="baseV" class="bad">81 min</dd>
+      </dl>
+      <div class="chart-l">Recent handoff times</div>
+      <div class="chart" id="chart"></div>
     </div>
-    <details class="panel">
-      <summary><h2 style="display:inline">Manual report</h2></summary>
-      <form id="report">
-        <input name="unit" placeholder="Unit (Medic 12)" required>
-        <input name="age" type="number" placeholder="Age" required>
-        <input name="complaint" placeholder="Complaint" required>
-        <select name="acuity"><option>stable</option><option>critical</option></select>
-        <input name="eta_min" type="number" placeholder="ETA (min)" required>
-        <button>Submit report</button>
-      </form>
-    </details>
-  </aside>
+    <div class="col-head"><h2>Handed off</h2><span class="count" id="cDone">0</span><span class="hint">Most recent first</span></div>
+    <div class="list" id="listDone"></div>
+  </section>
 </main>
 
-<script>
-const API_BASE = "http://localhost:8000";   // change to ngrok URL if the board runs on another machine
-const LIMIT_MIN = 30;                         // California AB 40 offload standard
+<footer>
+  <span>AB 40 standard: 90% of ambulance handoffs within 30 minutes</span>
+  <span id="src"></span>
+  <span class="err" id="err"></span>
+  <span class="grow"></span>
+  <span><kbd>F</kbd> full screen &nbsp; <kbd>S</kbd> sound &nbsp; <kbd>Shift</kbd> + <kbd>R</kbd> reset</span>
+</footer>
+<div id="toasts"></div>
+<pre id="debug"></pre>
 
-let state = null;
-let offline = false;
+<script>
+(() => {
+'use strict';
+
+/* =====================================================================
+   CONFIG: API wiring. Match these to contract.md.
+   ===================================================================== */
+const qs = new URLSearchParams(location.search);
+const CONFIG = {
+  apiBase: qs.get('api') || '',            // '' = same server that serves /board/
+  // GET endpoint polled for the board state. First one that returns JSON wins.
+  // Per contract.md: GET /state, POST /arrive/{id}, POST /handoff/{id}, POST /reset
+  statePaths: ['/state'],
+  actionPaths: {
+    arrived:    [['POST','/arrive/{id}']],
+    handed_off: [['POST','/handoff/{id}']],
+  },
+  resetPath: '/reset',
+  pollMs: 1000,
+  surgeCount: 3,          // 3+ ambulances...
+  surgeWindowMin: 20,     // ...arriving within 20 min = surge
+  waveMin: 30,            // width of the arrivals timeline
+  limitMin: 30,           // AB 40 handoff limit
+  targetPct: 90,          // AB 40: 90% of the time
+  baselineText: '81 min', // UCSD Medical Center, Jan 2026 state data
+  hospital: qs.get('hospital') || 'ER arrivals · UC San Diego Medical Center',
+  phone: qs.get('phone') || '',
+  demo: qs.has('demo'),
+  debug: qs.has('debug'),
+};
+const MIN = 60000, LIMIT = CONFIG.limitMin * MIN;
+
+/* ---------- state ---------- */
+const S = {
+  list: [], rawList: [], inbound: [],
+  surgeSrv: null, statsSrv: null,
+  offset: 0, statePath: null, lastOk: 0, err: null,
+  seen: new Set(), firstLoad: true, newUntil: new Map(),
+  overrides: new Map(),     // id -> status we set by clicking (until the server agrees)
+  localTimes: new Map(),    // id -> {arrived_at, handed_off_at} stamped on click
+  firstSeen: new Map(),     // 'id|status' -> local ms when first seen in that status
+  etaAnchors: new Map(),
+  wasSurge: false, sound: false, sig: '',
+  actionMemo: {},
+};
+const now = () => Date.now() + S.offset;
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+/* ---------- small helpers ---------- */
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const camel = k => k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+const cap = s => { s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); };
+const getPath = (o, p) => p.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o);
+function pick(o, keys) {
+  if (!o || typeof o !== 'object') return undefined;
+  for (const k of keys) {
+    for (const kk of (k.includes('_') ? [k, camel(k)] : [k])) {
+      const v = getPath(o, kk);
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+  }
+  return undefined;
+}
+const pad = n => String(n).padStart(2, '0');
+function mmss(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+const hm = ms => new Date(ms - S.offset).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+let naiveMode = null; // naive ISO strings (no timezone): decide once whether they are UTC or local
+function parseTime(v) {
+  if (v == null || v === '' || typeof v === 'boolean') return null;
+  if (typeof v === 'number') return v > 1e11 ? v : v > 1e8 ? v * 1000 : null;
+  if (typeof v !== 'string') return null;
+  let s = v.trim();
+  if (/^\d+(\.\d+)?$/.test(s)) return parseTime(parseFloat(s));
+  const tod = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (tod) {
+    let h = +tod[1]; const ap = (tod[4] || '').toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+    const d = new Date(); d.setHours(h, +tod[2], +(tod[3] || 0), 0); return d.getTime();
+  }
+  s = s.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1').replace(/([+-]\d\d)(\d\d)$/, '$1:$2');
+  if (/([zZ]|[+-]\d\d:\d\d)$/.test(s)) { const t = Date.parse(s); return isNaN(t) ? null : t; }
+  const local = Date.parse(s), utc = Date.parse(s + 'Z');
+  if (isNaN(local)) return isNaN(utc) ? null : utc;
+  if (naiveMode == null) naiveMode = Math.abs(utc - Date.now()) < Math.abs(local - Date.now()) ? 'utc' : 'local';
+  return naiveMode === 'utc' ? utc : local;
+}
+function num(v) { if (v == null || v === '' || typeof v === 'boolean') return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
+
+/* =====================================================================
+   normalize(): turns whatever the server sends into one shape:
+   {id, unit, short, age, sex, complaint, acuityText, acls, status,
+    eta_at, created_at, arrived_at, handed_off_at, quote, wait_ms}
+   ===================================================================== */
+const K = {
+  id: ['id','ambulance_id','call_id','uuid','unit_id','unit','callsign','call_sign'],
+  unit: ['unit','unit_name','callsign','call_sign','ambulance','ambulance_name','ambulance_unit','medic','rig','vehicle','crew','name','unit_id'],
+  age: ['age','patient_age','patient.age','age_years'],
+  sex: ['sex','gender','patient_sex','patient_gender','patient.sex','patient.gender'],
+  complaint: ['chief_complaint','complaint','cc','symptoms','symptom','problem','reason','injury','presentation','patient.chief_complaint','patient.complaint','condition','description','summary'],
+  acuityStrict: ['acuity','stability','severity','triage','triage_level','patient_status','condition_status','patient.acuity','patient.stability','patient.status','vitals_status','esi'],
+  acuityLoose: ['priority','condition','status','state'],
+  status: ['status','state','stage','phase','lifecycle'],
+  quote: ['transcript','raw_transcript','utterance','raw_text','said','spoken','message','text','notes','note','report'],
+  etaAbs: ['eta_at','eta_time','eta_ts','eta_timestamp','eta_iso','eta_datetime','arrival_time','expected_arrival','expected_arrival_time','expected_at','arrives_at','arrival_at','arrival_eta','estimated_arrival'],
+  etaRem: ['eta_remaining','minutes_remaining','eta_minutes_remaining','remaining_minutes','mins_remaining','minutes_left','eta_left'],
+  etaMin: ['eta_minutes','eta_min','eta_mins','minutes_out','mins_out','eta_in_minutes','minutes_away','eta'],
+  etaSec: ['eta_seconds','eta_secs','eta_sec','seconds_out','eta_s'],
+  created: ['reported_at','created_at','received_at','called_at','call_time','call_started_at','timestamp','time','ts','created','start_time','started_at'],
+  updated: ['eta_updated_at','updated_at','last_update','last_updated','modified_at'],
+  arrived: ['arrived_at','arrival_actual','actual_arrival','arrived_time','at_door_at','door_at','arrived_ts'],
+  handed: ['handed_off_at','handoff_at','handoff_time','handed_off_time','handover_at','transferred_at','offloaded_at','offload_at','completed_at','released_at','handed_off_ts'],
+  wait: ['handoff_minutes','wait_minutes','apot_minutes','offload_minutes','apot','door_minutes','handoff_duration_min'],
+  waitSec: ['handoff_seconds','wait_seconds','apot_seconds','offload_seconds','handoff_duration_s'],
+};
+
+function acuityClass(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return v <= 1 ? 'crit' : v === 2 ? 'serious' : 'stable';
+  const s = String(v).toLowerCase();
+  if (/unstable|crit|emergent|severe|code ?3|priority ?1|\bp1\b|arrest|resus|immediate|\bred\b|\besi ?[12]\b/.test(s)) return 'crit';
+  if (/non.?urgent|minor|\bgreen\b|priority ?3|\bp3\b|routine|\blow\b/.test(s)) return 'stable';
+  if (/serious|urgent|\byellow\b|moderate|guarded|priority ?2|\bp2\b|\bfair\b|\besi ?3\b/.test(s)) return 'serious';
+  if (/stable|\bgood\b|\bok\b/.test(s)) return 'stable';
+  return null;
+}
+const RANK = {en_route: 0, arrived: 1, handed_off: 2};
+function statusOf(a, hint) {
+  const raw = String(pick(a, K.status) ?? hint ?? '').toLowerCase().replace(/[\s-]+/g, '_');
+  const handedTs = pick(a, K.handed) != null || pick(a, ['handed_off','handoff_complete','is_handed_off']) === true;
+  const arrivedTs = pick(a, K.arrived) != null || pick(a, ['arrived','is_arrived','at_door']) === true;
+  if (/hand|transfer|complete|done|offload|closed|released|discharg/.test(raw) || handedTs) return 'handed_off';
+  if (/arriv|at_door|door|at_hospital|waiting|at_ed|parked|on_site|onsite/.test(raw) || arrivedTs) return 'arrived';
+  return 'en_route';
+}
+function shortUnit(u) {
+  const w = String(u).trim(); const d = w.match(/\d+/);
+  return d ? (w[0].toUpperCase() + d[0]) : w.slice(0, 5);
+}
+function resolveEta(id, minutes, firstAnchor, updated) {
+  const prev = S.etaAnchors.get(id);
+  let anchor;
+  if (!prev) anchor = firstAnchor ?? now();
+  else if (prev.min !== minutes) anchor = (updated && updated !== prev.upd) ? updated : now();
+  else anchor = prev.anchor;
+  S.etaAnchors.set(id, {min: minutes, anchor, upd: updated});
+  return anchor + minutes * MIN;
+}
+
+function normalize(a, i, hint) {
+  if (!a || typeof a !== 'object') return null;
+  const idRaw = pick(a, K.id);
+  const id = String(idRaw ?? ('row' + i));
+  let unit = pick(a, K.unit);
+  if (unit == null || typeof unit === 'object') unit = 'Unit ' + (i + 1);
+  else if (typeof unit === 'number' || /^\d+$/.test(String(unit))) unit = 'Unit ' + unit;
+  unit = String(unit);
+
+  const ageRaw = pick(a, K.age);
+  const age = ageRaw == null ? null : (parseInt(ageRaw, 10) || String(ageRaw));
+  let sex = pick(a, K.sex);
+  if (sex != null) { const s = String(sex).toLowerCase(); sex = /^m(ale)?$/.test(s) ? 'M' : /^f(emale)?$/.test(s) ? 'F' : String(sex).slice(0, 6); }
+
+  // acuity: explicit keys take any value, loose keys only if they look like acuity words
+  let acuityText = null, acls = null;
+  const strict = pick(a, K.acuityStrict);
+  if (strict != null && typeof strict !== 'object') { acuityText = String(strict); acls = acuityClass(strict) || 'unknown'; }
+  else for (const k of K.acuityLoose) {
+    const v = pick(a, [k]);
+    if (v != null && typeof v !== 'object' && acuityClass(v)) { acuityText = String(v); acls = acuityClass(v); break; }
+  }
+  if (acuityText && typeof strict === 'number') acuityText = ({crit: 'Critical', serious: 'Serious', stable: 'Stable'})[acls] + ' (' + strict + ')';
+
+  let complaint = null;
+  for (const k of K.complaint) {
+    const v = pick(a, [k]);
+    if (v != null && typeof v !== 'object' && String(v) !== acuityText && !(k === 'condition' && acuityClass(v) && String(v).split(/\s+/).length <= 2)) { complaint = String(v); break; }
+  }
+
+  const status0 = statusOf(a, hint);
+  const created = parseTime(pick(a, K.created));
+  const updated = parseTime(pick(a, K.updated));
+
+  // ETA: absolute time beats minutes
+  let eta_at = parseTime(pick(a, K.etaAbs));
+  if (eta_at == null) {
+    const e = pick(a, ['eta']);
+    if (typeof e === 'string' && /[T:\-]/.test(e) && parseTime(e)) eta_at = parseTime(e);
+    else if (typeof e === 'number' && e > 1e8) eta_at = parseTime(e);
+  }
+  if (eta_at == null) {
+    const rem = num(pick(a, K.etaRem));
+    const mins = num(pick(a, K.etaMin));
+    const secs = num(pick(a, K.etaSec));
+    if (rem != null) eta_at = resolveEta(id, rem, null, updated);
+    else if (mins != null && mins < 1e6) eta_at = resolveEta(id, mins, created, updated);
+    else if (secs != null) eta_at = resolveEta(id, secs / 60, created, updated);
+  }
+
+  let quote = pick(a, K.quote);
+  quote = (quote != null && typeof quote !== 'object') ? String(quote).trim() : null;
+  if (quote && complaint && quote.toLowerCase() === complaint.toLowerCase()) quote = null;
+
+  const x = {
+    id, unit, short: shortUnit(unit), age, sex, complaint: complaint && cap(complaint), acuityText: acuityText && cap(acuityText), acls: acls || 'unknown',
+    status: status0, eta_at, created_at: created,
+    arrived_at: parseTime(pick(a, K.arrived)), handed_off_at: parseTime(pick(a, K.handed)),
+    quote, wait_ms: null,
+  };
+  const wm = num(pick(a, K.wait)), ws = num(pick(a, K.waitSec));
+  if (wm != null) x.wait_ms = wm * MIN; else if (ws != null) x.wait_ms = ws * 1000;
+  return x;
+}
+
+function extractList(j) {
+  if (Array.isArray(j)) return j.map(a => [a, null]);
+  if (!j || typeof j !== 'object') return null;
+  const out = []; let found = false;
+  const add = (arr, hint) => { found = true; for (const a of arr) out.push([a, hint]); };
+  const asArr = v => {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object') {
+      const vals = Object.values(v);
+      if (!vals.length) return [];
+      if (vals.every(x => x && typeof x === 'object' && !Array.isArray(x))) return Object.entries(v).map(([id, x]) => ({id, ...x}));
+    }
+    return null;
+  };
+  // split lists by status, e.g. {inbound:[...], at_door:[...], handed_off:[...]}
+  const SPLIT = {en_route: ['en_route','enroute','inbound'], arrived: ['arrived','at_door','waiting'], handed_off: ['handed_off','completed','history','handoffs','done','past']};
+  for (const k of ['ambulances','units','incoming','cards','patients','items','calls','arrivals','active','records','list','results','rows']) {
+    const arr = asArr(j[k]); if (arr) { add(arr, null); break; }
+  }
+  for (const [hint, keys] of Object.entries(SPLIT)) for (const k of keys) {
+    const arr = asArr(j[k] ?? j[camel(k)]); if (arr) add(arr, hint);
+  }
+  if (!found) for (const k of ['data','state','board']) { if (j[k] && typeof j[k] === 'object') { const inner = extractList(j[k]); if (inner) return inner; } }
+  return found ? out : null;
+}
+
+function normSurge(j) {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+  const out = {};
+  const s = pick(j, ['surge','surge_alert','surge_status','alert','wave']);
+  if (typeof s === 'boolean') out.active = s;
+  else if (s && typeof s === 'object') {
+    const a = pick(s, ['active','is_active','triggered','on','surge','in_surge']);
+    out.active = a === true || a === 'true' || a === 1;
+    const c = pick(s, ['count','n','ambulances','num','incoming','size']);
+    out.count = Array.isArray(c) ? c.length : num(c);
+    out.call = pick(s, ['nurse_call_status','call_status','nurse_status','nurse_call','call','nurse_called']);
+    out.calledAt = parseTime(pick(s, ['nurse_called_at','called_at','call_started_at','triggered_at','started_at','at','time']));
+  }
+  const a2 = pick(j, ['surge_active','in_surge','is_surge']); if (a2 != null) out.active = !!a2;
+  const call = pick(j, ['nurse_call','charge_nurse_call','nurse_call_status','charge_nurse','call_status','nurse_called']);
+  if (call != null && out.call == null) out.call = call;
+  if (out.call && typeof out.call === 'object') {
+    out.calledAt = out.calledAt ?? parseTime(pick(out.call, ['called_at','started_at','at','time','created_at']));
+    out.call = pick(out.call, ['status','state','result']) ?? (pick(out.call, ['called','ok','success']) === true ? 'completed' : null);
+  }
+  if (out.call === true) out.call = 'completed';
+  if (out.call === false) out.call = null;
+  // contract.md: call_log = [{time, to, message}], newest entry = latest nurse alert
+  const log = pick(j, ['call_log']);
+  if (Array.isArray(log) && log.length && out.call == null) {
+    const times = log.map(e => parseTime(e && e.time)).filter(Boolean);
+    if (times.length) { out.call = 'alerted'; out.calledAt = Math.max(...times); }
+  }
+  return Object.keys(out).length ? out : null;
+}
+function normStats(j) {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+  const s = pick(j, ['stats','compliance','metrics','summary_stats']);
+  if (!s || typeof s !== 'object') return null;
+  let pct = num(pick(s, ['pct_within_30','within_30_pct','percent_within_30','compliance_pct','compliance_percent','compliance_rate','pct_within_limit','within_limit_pct','percent_compliant','compliance','pct','percent','rate']));
+  if (pct != null && pct <= 1) pct *= 100;
+  const p90 = num(pick(s, ['p90_handoff_min','p90_minutes','p90_min','p90','percentile_90','ninetieth_percentile','p90_wait','p90_wait_min','apot_p90']));
+  const p90s = num(pick(s, ['p90_seconds','p90_sec','p90_s']));
+  const med = num(pick(s, ['median_minutes','median_min','median','p50','median_wait']));
+  const meds = num(pick(s, ['median_seconds','median_sec','p50_seconds']));
+  const n = num(pick(s, ['count','n','total','handoffs','total_handoffs','completed','num_handoffs','handed_off']));
+  let within = num(pick(s, ['within_30','within_limit','compliant','on_time','within']));
+  const over = num(pick(s, ['over_30_count','over_30','over_limit']));
+  if (within == null && over != null && n != null) within = n - over;
+  if (pct == null && within != null && n) pct = within / n * 100;
+  return {
+    pct, n, within,
+    p90ms: p90s != null ? p90s * 1000 : p90 != null ? p90 * MIN : null,
+    medms: meds != null ? meds * 1000 : med != null ? med * MIN : null,
+  };
+}
+
+/* ---------- fetching ---------- */
+async function fetchState() {
+  const paths = S.statePath ? [S.statePath] : CONFIG.statePaths;
+  let lastErr = null;
+  for (const p of paths) {
+    try {
+      const r = await fetch(CONFIG.apiBase + p, {cache: 'no-store', headers: {Accept: 'application/json'}});
+      if (!r.ok) { lastErr = `${p} returned HTTP ${r.status}`; continue; }
+      const txt = await r.text();
+      let j; try { j = JSON.parse(txt); } catch { lastErr = `${p} is not JSON`; continue; }
+      if (extractList(j) === null) { lastErr = `${p} has no ambulance list`; continue; }
+      if (!S.statePath) { S.statePath = p; console.info('[handoff] board is reading', p); }
+      return j;
+    } catch (e) { lastErr = `${p}: ${e.message}`; }
+  }
+  throw new Error(lastErr || 'no state endpoint found');
+}
 
 async function poll() {
   try {
-    const r = await fetch(API_BASE + "/state", { cache: "no-store" });
-    if (!r.ok) throw new Error(r.status);
-    state = await r.json();
-    offline = false;
+    const j = CONFIG.demo ? Demo.state() : await fetchState();
+    ingest(j);
+    S.lastOk = Date.now(); S.err = null;
   } catch (e) {
-    offline = true;
-    try { state = await (await fetch("fake_state.json", { cache: "no-store" })).json(); } catch (_) {}
+    S.err = e.message || String(e);
   }
-  render();
+  setConn();
+  setTimeout(poll, CONFIG.pollMs);
 }
 
-async function act(path) {
-  try { await fetch(API_BASE + path, { method: "POST" }); } catch (e) { alert("Server unreachable"); }
-  poll();
+function ingest(j) {
+  if (CONFIG.debug) { const d = $('#debug'); d.style.display = 'block'; d.textContent = (S.statePath || 'demo') + '\n' + JSON.stringify(j, null, 2).slice(0, 6000); }
+  if (j && typeof j === 'object' && !Array.isArray(j)) {
+    const sn = parseTime(pick(j, ['now','server_time','server_now','generated_at','ts']));
+    if (sn) { const off = sn - Date.now(); if (Math.abs(off) < 12 * 3600 * 1000) S.offset = Math.abs(off) < 1500 ? 0 : off; }
+  }
+  const rows = extractList(j) || [];
+  const byId = new Map();   // dedupe by id, keep the furthest-along status
+  rows.map(([a, hint], i) => normalize(a, i, hint)).filter(Boolean)
+    .forEach(x => { const p = byId.get(x.id); if (!p || RANK[x.status] >= RANK[p.status]) byId.set(x.id, x); });
+  S.rawList = [...byId.values()];
+  S.surgeSrv = normSurge(j);
+  S.statsSrv = normStats(j);
+
+  // forget clicks for ambulances the server no longer has (after /reset)
+  const ids = new Set(S.rawList.map(x => x.id));
+  for (const id of [...S.overrides.keys()]) if (!ids.has(id)) S.overrides.delete(id);
+  if (!S.rawList.length) { S.localTimes.clear(); S.firstSeen.clear(); S.etaAnchors.clear(); }
+
+  for (const x of S.rawList) {
+    if (!S.seen.has(x.id)) {
+      S.seen.add(x.id);
+      if (!S.firstLoad && x.status === 'en_route') { S.newUntil.set(x.id, Date.now() + 10000); Sound.chime(); }
+    }
+  }
+  S.firstLoad = false;
+  merge();
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function merge() {
+  const t = now();
+  S.list = S.rawList.map(r => {
+    const x = {...r};
+    const o = S.overrides.get(x.id);
+    if (o) { if (RANK[o] > RANK[x.status]) x.status = o; else S.overrides.delete(x.id); }
+    const lt = S.localTimes.get(x.id) || {};
+    const seen = st => { const k = x.id + '|' + st; if (!S.firstSeen.has(k)) S.firstSeen.set(k, t); return S.firstSeen.get(k); };
+    if (RANK[x.status] >= 1 && x.arrived_at == null) x.arrived_at = lt.arrived_at ?? seen('arrived');
+    if (RANK[x.status] >= 2 && x.handed_off_at == null) x.handed_off_at = lt.handed_off_at ?? seen('handed_off');
+    if (x.status === 'handed_off' && x.wait_ms == null && x.arrived_at != null) x.wait_ms = x.handed_off_at - x.arrived_at;
+    return x;
+  });
+  const sig = JSON.stringify(S.list.map(x => [x.id, x.status, x.unit, x.age, x.sex, x.complaint, x.acuityText, x.eta_at && Math.round(x.eta_at / 1000), x.arrived_at, x.handed_off_at, x.quote, x.wait_ms]));
+  if (sig !== S.sig) { S.sig = sig; render(); }
 }
 
-function etaText(a) {
-  if (a.status !== "incoming") return null;
-  const due = new Date(a.reported_at).getTime() + a.eta_min * 60000;
-  const s = Math.round((due - Date.now()) / 1000);
-  if (s <= 0) return "DUE";
-  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+/* ---------- actions (buttons) ---------- */
+async function sendAction(id, act) {
+  const list = CONFIG.actionPaths[act];
+  const m = S.actionMemo[act];
+  const order = m != null ? [list[m], ...list.filter((_, i) => i !== m)] : list;
+  let last = null;
+  for (const [method, tpl] of order) {
+    const url = CONFIG.apiBase + tpl.replace('{id}', encodeURIComponent(id));
+    let r;
+    try {
+      r = await fetch(url, {method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: act, id, at: new Date(now()).toISOString()})});
+    } catch (e) { last = e.message; continue; }
+    if (r.ok) { S.actionMemo[act] = list.findIndex(x => x[0] === method && x[1] === tpl); return; }
+    if (r.status === 404 || r.status === 405) { last = `HTTP ${r.status}`; continue; }
+    throw new Error(`${method} ${tpl} returned HTTP ${r.status}`);
+  }
+  throw new Error(last || 'no matching endpoint');
+}
+async function doAction(id, act, btn) {
+  if (btn) btn.disabled = true;
+  const lt = S.localTimes.get(id) || {};
+  if (act === 'arrived') lt.arrived_at = lt.arrived_at ?? now(); else lt.handed_off_at = lt.handed_off_at ?? now();
+  S.localTimes.set(id, lt);
+  S.overrides.set(id, act);
+  Sound.click();
+  merge();
+  if (CONFIG.demo) { Demo.act(id, act); return; }
+  try { await sendAction(id, act); }
+  catch (e) { toast(`The server didn't save "${act === 'arrived' ? 'Arrived' : 'Handed off'}" (${e.message}). The board still shows it.`); }
+}
+async function resetAll() {
+  if (!confirm('Reset the board? This clears every ambulance.')) return;
+  if (CONFIG.demo) Demo.reset();
+  else { try { await fetch(CONFIG.apiBase + CONFIG.resetPath, {method: 'POST'}); } catch (e) { toast('Reset failed: ' + e.message); } }
+  S.overrides.clear(); S.localTimes.clear(); S.firstSeen.clear(); S.etaAnchors.clear(); S.seen.clear(); S.newUntil.clear();
+  S.firstLoad = true; S.wasSurge = false; S.sig = '';
 }
 
-function minsSince(iso) { return Math.floor((Date.now() - new Date(iso).getTime()) / 60000); }
+/* ---------- rendering ---------- */
+const badge = x => x.acuityText ? `<span class="badge ${x.acls}">${esc(x.acuityText.slice(0, 20))}</span>` : '';
+function ptLine(x) {
+  const parts = [];
+  if (x.age != null) parts.push(esc(typeof x.age === 'number' ? x.age + ' y/o' : x.age));
+  if (x.sex) parts.push(esc(x.sex));
+  if (x.complaint) parts.push(esc(x.complaint));
+  return parts.length ? parts.join('<span class="sep">·</span>') : '<span class="pending">Patient details pending</span>';
+}
+function cardIn(x) {
+  const isNew = (S.newUntil.get(x.id) || 0) > Date.now();
+  return `<article class="card in${isNew ? ' new' : ''}" data-id="${esc(x.id)}" data-eta="${x.eta_at ?? ''}">
+    <div class="top"><span class="unit">${esc(x.unit)}</span>${badge(x)}${isNew ? '<span class="badge new">New call</span>' : ''}</div>
+    <div class="cdbox"><div class="cd" data-cd>–</div><div class="cdl" data-cdl>${x.eta_at ? 'ETA ' + hm(x.eta_at) : 'ETA unknown'}</div></div>
+    <div class="pt">${ptLine(x)}</div>
+    <div class="meta">${x.quote ? `<div class="quote">“${esc(x.quote)}”</div>` : x.created_at ? 'Called in at ' + hm(x.created_at) : ''}</div>
+    <div class="act"><button class="btn arrive" data-act="arrived" data-id="${esc(x.id)}">Arrived</button></div>
+  </article>`;
+}
+function cardDoor(x) {
+  return `<article class="card door" data-id="${esc(x.id)}" data-since="${x.arrived_at}">
+    <div class="top"><span class="unit">${esc(x.unit)}</span>${badge(x)}<span class="badge over">Over ${CONFIG.limitMin} min</span></div>
+    <div class="cdbox"><div class="cd" data-wait>0:00</div><div class="cdl">Waiting since ${hm(x.arrived_at)}</div></div>
+    <div class="pt">${ptLine(x)}</div>
+    <div class="meta"><div class="barwrap"><div class="bar"><div class="fill" data-fill></div></div><span class="barl">${CONFIG.limitMin} min limit</span></div></div>
+    <div class="act"><button class="btn handoff" data-act="handed_off" data-id="${esc(x.id)}">Handed off</button></div>
+  </article>`;
+}
+function rowDone(x) {
+  const w = x.wait_ms, ok = w != null && w <= LIMIT;
+  return `<div class="done-row${w != null && !ok ? ' bad' : ''}" title="${x.handed_off_at ? 'Handed off at ' + hm(x.handed_off_at) : ''}">
+    <span class="u">${esc(x.unit)}</span><span class="c">${esc(x.complaint || '')}</span>
+    <span class="t">${w == null ? '–' : mmss(w)}</span><span class="m">${w == null ? '' : ok ? 'On time' : 'Over limit'}</span></div>`;
+}
+const emptyIn = () => `<div class="empty">No ambulances on the way. ${CONFIG.phone
+  ? `When a paramedic calls <b>${esc(fmtPhone(CONFIG.phone))}</b>, the ambulance shows up here.`
+  : 'Each paramedic call shows up here.'}</div>`;
+const emptyDoor = () => `<div class="empty">No ambulances waiting. Press <b>Arrived</b> when one pulls in and its wait clock starts.</div>`;
+const emptyDone = () => `<div class="empty">No handoffs yet today. Press <b>Handed off</b> when a nurse takes the patient.</div>`;
 
 function render() {
-  const conn = document.getElementById("conn");
-  conn.textContent = offline ? "OFFLINE — showing fake_state.json" : "live · " + new Date().toLocaleTimeString();
-  conn.className = offline ? "offline" : "";
-  if (!state) return;
+  const L = S.list;
+  const inbound = L.filter(x => x.status === 'en_route').sort((a, b) => (a.eta_at ?? Infinity) - (b.eta_at ?? Infinity));
+  const door = L.filter(x => x.status === 'arrived').sort((a, b) => (a.arrived_at ?? 0) - (b.arrived_at ?? 0));
+  const done = L.filter(x => x.status === 'handed_off').sort((a, b) => (b.handed_off_at ?? 0) - (a.handed_off_at ?? 0));
+  S.inbound = inbound;
 
-  document.getElementById("surge").style.display = state.surge ? "block" : "none";
+  $('#cIn').textContent = inbound.length;
+  $('#cDoor').textContent = door.length;
+  $('#cDone').textContent = done.length;
+  const keepScroll = (sel, html) => { const el = $(sel), top = el.scrollTop; el.innerHTML = html; el.scrollTop = top; };
+  keepScroll('#listIn', inbound.length ? inbound.map(cardIn).join('') : emptyIn());
+  keepScroll('#listDoor', door.length ? door.map(cardDoor).join('') : emptyDoor());
+  keepScroll('#listDone', done.length ? done.slice(0, 15).map(rowDone).join('') : emptyDone());
 
-  const st = state.stats;
-  const bad = (v) => v > LIMIT_MIN ? ` class="bad"` : "";
-  document.getElementById("stats").innerHTML =
-    `Avg handoff <span${bad(st.avg_handoff_min)}>${st.avg_handoff_min} min</span> · ` +
-    `90th pct <span${bad(st.p90_handoff_min)}>${st.p90_handoff_min} min</span> · ` +
-    `Over 30 min: <span${st.over_30_count ? ' class="bad"' : ""}>${st.over_30_count}</span> · ` +
-    `Legal limit: ${LIMIT_MIN} min`;
-
-  const active = state.ambulances.filter(a => a.status !== "handed_off");
-  document.getElementById("cards").innerHTML = active.length ? active.map(a => {
-    const eta = etaText(a);
-    const etaHtml = eta !== null
-      ? `<span class="eta">${eta}</span>`
-      : `<span class="eta here">on ramp ${minsSince(a.arrived_at)}m</span>`;
-    return `<div class="card ${a.acuity === "critical" ? "critical" : ""}">
-      <div class="top"><span class="unit">${esc(a.unit)}</span>${etaHtml}</div>
-      <div class="who">${esc(a.age)} y/o · ${esc(a.complaint)}</div>
-      <span class="tag">${esc(a.acuity)}</span><span class="status">${esc(a.status)}</span>
-      <div class="btns">
-        <button class="arrive" onclick="act('/arrive/${a.id}')" ${a.status !== "incoming" ? "disabled" : ""}>Arrived</button>
-        <button class="handoff" onclick="act('/handoff/${a.id}')">Handed off</button>
-      </div>
-    </div>`;
-  }).join("") : `<div class="empty">No ambulances incoming.</div>`;
-
-  const calls = [...state.call_log].reverse();
-  document.getElementById("calls").innerHTML = calls.length
-    ? calls.map(c => `<div><time>${new Date(c.time).toLocaleTimeString()} → ${esc(c.to)}</time>${esc(c.message)}</div>`).join("")
-    : `<div class="empty">No calls yet.</div>`;
+  renderWave(inbound);
+  renderStats(done);
+  tick();
 }
 
-document.getElementById("report").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  const body = Object.fromEntries(f);
-  body.age = +body.age; body.eta_min = +body.eta_min;
-  try {
-    await fetch(API_BASE + "/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    e.target.reset();
-  } catch (_) { alert("Server unreachable"); }
-  poll();
+const posPct = rem => clamp(rem / (CONFIG.waveMin * MIN), 0, 1) * 100;
+function renderWave(inbound) {
+  const t = now(); const rows = [[], [], []];
+  $('#markers').innerHTML = inbound.filter(x => x.eta_at != null).map(x => {
+    const pos = posPct(x.eta_at - t);
+    let r = 0; while (r < 2 && rows[r].some(p => Math.abs(p - pos) < 9)) r++;
+    rows[r].push(pos);
+    const isNew = (S.newUntil.get(x.id) || 0) > Date.now();
+    return `<div class="mk ${x.acls} r${r}${isNew ? ' new' : ''}" data-id="${esc(x.id)}" data-eta="${x.eta_at}" style="left:${pos}%"><span class="chip">${esc(x.short)} <i data-mm></i></span><span class="stem"></span><span class="pin"></span></div>`;
+  }).join('');
+}
+
+const pctile = (sorted, p) => sorted.length ? sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] : null;
+function renderStats(done) {
+  const waits = done.map(x => x.wait_ms).filter(w => w != null && w >= 0);
+  const sorted = [...waits].sort((a, b) => a - b);
+  const local = {n: waits.length, within: waits.filter(w => w <= LIMIT).length, p90ms: pctile(sorted, .9), medms: pctile(sorted, .5)};
+  local.pct = local.n ? local.within / local.n * 100 : null;
+  // use the server's numbers only if they cover more handoffs than the board can see
+  const srv = S.statsSrv;
+  const st = (srv && srv.n != null && srv.n > local.n) ? {
+    n: srv.n, within: srv.within ?? (srv.pct != null ? Math.round(srv.pct / 100 * srv.n) : null),
+    pct: srv.pct ?? (srv.within != null ? srv.within / srv.n * 100 : null), p90ms: srv.p90ms ?? local.p90ms, medms: srv.medms ?? local.medms,
+  } : local;
+
+  const good = st.pct != null && st.pct >= CONFIG.targetPct;
+  const big = $('#sPct');
+  big.className = 'big-num' + (st.pct == null ? ' none' : good ? '' : ' bad');
+  big.textContent = st.pct == null ? '–' : `${Math.round(st.pct)}%`;
+  const pill = $('#sPill');
+  pill.hidden = st.pct == null;
+  pill.className = 'pill ' + (good ? 'ok' : 'bad');
+  pill.textContent = good ? 'Meets target' : 'Below target';
+  const g = $('#gauge');
+  g.style.width = (st.pct ?? 0) + '%';
+  g.classList.toggle('bad', st.pct != null && !good);
+  $('#sPctSub').textContent = st.n
+    ? `${st.within ?? '?'} of ${st.n} handed off within ${CONFIG.limitMin} minutes.`
+    : 'No handoffs logged yet today.';
+
+  const p90 = $('#sP90');
+  p90.textContent = st.p90ms == null ? '–' : mmss(st.p90ms);
+  p90.classList.toggle('bad', st.p90ms != null && st.p90ms > LIMIT);
+  $('#sMed').textContent = st.medms == null ? '–' : mmss(st.medms);
+
+  const chart = $('#chart');
+  const recent = done.filter(x => x.wait_ms != null).slice(0, 16).reverse();
+  if (!recent.length) { chart.innerHTML = '<span class="none">Times show up here after the first handoff.</span>'; return; }
+  const maxMin = Math.max(45, Math.ceil(Math.max(...recent.map(x => x.wait_ms)) / MIN / 15) * 15);
+  chart.innerHTML = recent.map(x => {
+    const h = clamp(x.wait_ms / MIN / maxMin * 100, 2, 100);
+    return `<div class="b${x.wait_ms > LIMIT ? ' bad' : ''}" style="height:${h}%" title="${esc(x.unit)}: ${mmss(x.wait_ms)}"></div>`;
+  }).join('') + `<div class="lim" style="bottom:${CONFIG.limitMin / maxMin * 100}%"><span>${CONFIG.limitMin} min</span></div>`;
+}
+
+/* ---------- ticker: clocks, countdowns, surge ---------- */
+function callLabel(c) {
+  if (c == null) return null;
+  const s = String(c).toLowerCase();
+  if (/fail|busy|no.?answer|error|cancel|declin/.test(s)) return {cls: 'bad', text: 'Call to charge nurse failed. Page them manually.'};
+  if (s === 'alerted') return {cls: 'ok', text: 'Charge nurse alerted'};
+  if (/complet|answer|done|ended|success|notified|deliver|connected|true|^ok$|^called$|^sent$/.test(s)) return {cls: 'ok', text: 'Charge nurse called'};
+  if (/call|ring|queue|progress|dial|initiat|pending|start/.test(s)) return {cls: 'live', text: 'Calling the charge nurse…'};
+  return {cls: 'live', text: 'Charge nurse: ' + String(c)};
+}
+
+function tick() {
+  const t = now();
+  $('#clock').textContent = new Date().toLocaleTimeString([], {hour: 'numeric', minute: '2-digit', second: '2-digit'});
+
+  for (const el of $$('.card.in')) {
+    const eta = +el.dataset.eta, cd = el.querySelector('[data-cd]'), cdl = el.querySelector('[data-cdl]');
+    if (!eta) { cd.textContent = '–'; continue; }
+    const rem = eta - t;
+    if (rem > 0) {
+      cd.textContent = mmss(Math.ceil(rem / 1000) * 1000);
+      el.classList.toggle('soon', rem <= 2 * MIN); el.classList.remove('due');
+      cdl.textContent = rem <= MIN ? 'Arriving now' : 'ETA ' + hm(eta);
+    } else {
+      cd.textContent = 'Due';
+      el.classList.add('due'); el.classList.remove('soon');
+      cdl.textContent = `Expected at ${hm(eta)}`;
+    }
+    if (el.classList.contains('new') && (S.newUntil.get(el.dataset.id) || 0) <= Date.now()) { el.classList.remove('new'); el.querySelector('.badge.new')?.remove(); }
+  }
+  let longest = 0;
+  for (const el of $$('.card.door')) {
+    const since = +el.dataset.since; if (!since) continue;
+    const w = Math.max(0, t - since); longest = Math.max(longest, w);
+    el.querySelector('[data-wait]').textContent = mmss(w);
+    el.querySelector('[data-fill]').style.width = clamp(w / LIMIT * 100, 0, 100) + '%';
+    el.classList.toggle('warn', w >= LIMIT * 2 / 3 && w < LIMIT);
+    el.classList.toggle('over', w >= LIMIT);
+  }
+  $('#doorHint').textContent = longest ? `Longest wait ${mmss(longest)}` : 'Waiting for a nurse';
+
+  for (const el of $$('.mk')) {
+    const rem = +el.dataset.eta - t;
+    el.style.left = posPct(rem) + '%';
+    const mm = el.querySelector('[data-mm]');
+    if (mm) mm.textContent = rem <= 0 ? 'due' : rem > CONFIG.waveMin * MIN ? `${Math.ceil(rem / MIN)}+ min` : `${Math.ceil(rem / MIN)} min`;
+    if (el.classList.contains('new') && (S.newUntil.get(el.dataset.id) || 0) <= Date.now()) el.classList.remove('new');
+  }
+
+  // surge: 3+ inbound with ETA inside the window (or the server says so)
+  const win = CONFIG.surgeWindowMin * MIN;
+  const inWin = S.inbound.filter(x => x.eta_at != null && x.eta_at - t <= win && x.eta_at - t > -15 * MIN).length;
+  const srv = S.surgeSrv;
+  const active = inWin >= CONFIG.surgeCount || !!(srv && srv.active);
+  const count = Math.max(inWin, (srv && srv.active && srv.count) || 0);
+  const wc = $('#waveCount');
+  wc.textContent = active
+    ? `${inWin} arriving within ${CONFIG.surgeWindowMin} min · surge`
+    : `${inWin} arriving within ${CONFIG.surgeWindowMin} min · surge alert at ${CONFIG.surgeCount}`;
+  wc.classList.toggle('hot', active);
+  $('#window').classList.toggle('hot', active);
+  $('#surgeTitle').textContent = `Surge: ${count} ambulances arriving in the next ${CONFIG.surgeWindowMin} minutes`;
+  const cl = callLabel(srv && srv.call);
+  const sc = $('#surgeCall');
+  if (cl) {
+    sc.textContent = cl.text + (cl.cls === 'ok' && srv.calledAt ? ' at ' + hm(srv.calledAt) : '');
+    sc.hidden = false;
+  } else sc.hidden = true;
+  $('#surge').classList.toggle('on', active);
+  if (active && !S.wasSurge) Sound.alarm();
+  S.wasSurge = active;
+
+  const ago = S.lastOk ? (Date.now() - S.lastOk) / 1000 : null;
+  $('#src').textContent = CONFIG.demo ? 'Showing demo data, not connected to the server' : S.statePath ? `Updated ${ago < 1.5 ? 'just now' : Math.round(ago) + ' seconds ago'} from ${CONFIG.apiBase}${S.statePath}` : '';
+  $('#err').textContent = S.err && !CONFIG.demo ? 'Problem reaching the server: ' + S.err : '';
+}
+function setConn() {
+  const c = $('#conn'), txt = $('#connText');
+  if (CONFIG.demo) { c.className = 'status demo'; txt.textContent = 'Demo data'; return; }
+  const fresh = S.lastOk && Date.now() - S.lastOk < 4000;
+  c.className = 'status ' + (fresh ? 'live' : 'off');
+  txt.textContent = fresh ? 'Live' : S.lastOk ? 'Reconnecting…' : 'Connecting…';
+}
+
+/* ---------- sound (WebAudio, no files; needs one click to enable) ---------- */
+const Sound = {
+  ctx: null,
+  enable() { try { this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)(); this.ctx.resume(); } catch {} },
+  tone(f, at, dur, type = 'sine', g = 0.16) {
+    const c = this.ctx; if (!c) return;
+    const o = c.createOscillator(), v = c.createGain(), t0 = c.currentTime + at;
+    o.type = type; o.frequency.value = f;
+    v.gain.setValueAtTime(0.0001, t0); v.gain.exponentialRampToValueAtTime(g, t0 + 0.02); v.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(v).connect(c.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+  },
+  chime() { if (!S.sound) return; this.tone(880, 0, .2); this.tone(1318, .15, .32); },
+  alarm() { if (!S.sound) return; for (let i = 0; i < 3; i++) { this.tone(740, i * .55, .24, 'square', .07); this.tone(988, i * .55 + .26, .24, 'square', .07); } },
+  click() { if (!S.sound) return; this.tone(660, 0, .08, 'triangle', .08); },
+};
+function setSound(on) {
+  S.sound = on; if (on) Sound.enable();
+  const b = $('#soundBtn'); b.textContent = on ? 'Sound: on' : 'Sound: off'; b.classList.toggle('on', on);
+  if (on) Sound.chime();
+}
+
+/* ---------- misc UI ---------- */
+function toast(msg) {
+  const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
+  $('#toasts').appendChild(d); setTimeout(() => d.remove(), 6000);
+}
+function fmtPhone(p) { const d = String(p).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : p; }
+function toggleFs() { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.(); }
+
+$('#main').addEventListener('click', e => {
+  const b = e.target.closest('.btn[data-act]'); if (!b) return;
+  doAction(b.dataset.id, b.dataset.act, b);
+});
+$('#soundBtn').addEventListener('click', () => setSound(!S.sound));
+$('#fsBtn').addEventListener('click', toggleFs);
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches('input,textarea')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'f') toggleFs();
+  else if (k === 's') setSound(!S.sound);
+  else if (k === 'r' && e.shiftKey) resetAll();
+  else if (k === 'n' && CONFIG.demo) Demo.addRandom();
 });
 
+/* =====================================================================
+   DEMO MODE (?demo=1): fake server so the board works with no backend.
+   Header shows "Demo data". For rehearsal and the backup video.
+   ===================================================================== */
+const Demo = (() => {
+  let t0, store, plan, callStart, rnd = 0;
+  const iso = ms => new Date(ms).toISOString();
+  const HIST = [[12, 230], [8, 205], [22, 180], [17, 152], [9, 128], [34, 104], [14, 80], [11, 61], [19, 40], [7, 22]];
+  const HU = ['Medic 2', 'Medic 9', 'Engine 5', 'Medic 11', 'Rescue 3', 'Medic 21', 'Medic 6', 'Engine 18', 'Medic 4', 'Medic 12'];
+  const HC = ['Shortness of breath', 'Abdominal pain', 'Fainting', 'Fall, wrist injury', 'Chest pain', 'Stroke symptoms', 'Allergic reaction', 'Back pain', 'Seizure', 'Low blood sugar'];
+  const PLAN = [
+    {at: 2, unit: 'Medic 14', age: 62, sex: 'M', cc: 'Chest pain', ac: 'Stable', eta: 12, said: 'Medic 14, 62-year-old, chest pain, stable, 12 minutes out'},
+    {at: 8, unit: 'Medic 7', age: 45, sex: 'F', cc: 'Car crash, leg injury', ac: 'Unstable', eta: 9, said: 'Medic 7, 45 female, car crash, leg injury, unstable, 9 minutes out'},
+    {at: 14, unit: 'Engine 22', age: 81, sex: 'F', cc: 'Fall, hip pain', ac: 'Stable', eta: 17, said: 'Engine 22, 81-year-old female, fell at home, hip pain, stable, 17 minutes out'},
+    {at: 20, unit: 'Medic 31', age: 29, sex: 'M', cc: 'Asthma attack', ac: 'Serious', eta: 6, said: 'Medic 31, 29 male, asthma attack, serious, 6 minutes out'},
+  ];
+  const EXTRA = [['Medic 18', 54, 'M', 'Diabetic, confused', 'Stable'], ['Rescue 9', 71, 'F', 'Stroke symptoms', 'Critical'], ['Medic 40', 33, 'F', 'Overdose', 'Serious'], ['Engine 3', 67, 'M', 'Shortness of breath', 'Stable']];
+  function reset() {
+    t0 = Date.now(); store = new Map(); callStart = null; plan = PLAN.map(p => ({...p}));
+    HIST.forEach(([w, ago], i) => {
+      const h = t0 - ago * MIN;
+      store.set('h' + i, {id: 'h' + i, unit: HU[i], age: 25 + (i * 17) % 60, sex: i % 2 ? 'F' : 'M', chief_complaint: HC[i], acuity: 'Stable', status: 'handed_off',
+        created_at: iso(h - (w + 14) * MIN), eta_minutes: 12, arrived_at: iso(h - w * MIN), handed_off_at: iso(h)});
+    });
+  }
+  function add(p) {
+    const id = 'd' + (++rnd);
+    store.set(id, {id, unit: p.unit, age: p.age, sex: p.sex, chief_complaint: p.cc, acuity: p.ac, status: 'en_route', eta_minutes: p.eta, created_at: iso(Date.now()), transcript: p.said});
+  }
+  function state() {
+    const el = (Date.now() - t0) / 1000;
+    for (const p of plan) if (!p.done && el >= p.at) { p.done = true; add(p); }
+    const inWin = [...store.values()].filter(a => a.status === 'en_route' && Date.parse(a.created_at) + a.eta_minutes * MIN - Date.now() <= CONFIG.surgeWindowMin * MIN).length;
+    const active = inWin >= CONFIG.surgeCount;
+    if (active && !callStart) callStart = Date.now();
+    if (!active) callStart = null;
+    const surge = {active, count: inWin, nurse_call_status: callStart ? (Date.now() - callStart < 6000 ? 'calling' : 'completed') : null, nurse_called_at: callStart ? iso(callStart) : null};
+    return {now: iso(Date.now()), ambulances: [...store.values()].map(a => ({...a})), surge};
+  }
+  function act(id, a) {
+    const r = store.get(id); if (!r) return;
+    if (a === 'arrived') { r.status = 'arrived'; r.arrived_at = iso(Date.now()); }
+    else { r.status = 'handed_off'; r.handed_off_at = iso(Date.now()); }
+  }
+  function addRandom() {
+    const e = EXTRA[rnd % EXTRA.length];
+    add({unit: e[0], age: e[1], sex: e[2], cc: e[3], ac: e[4], eta: 4 + (rnd * 7) % 15, said: `${e[0]}, ${e[1]}-year-old, ${e[3].toLowerCase()}, ${e[4].toLowerCase()}, on the way`});
+  }
+  reset();
+  return {state, act, reset, addRandom};
+})();
+
+/* ---------- boot ---------- */
+$('#hospital').textContent = CONFIG.hospital;
+$('#waveMin').textContent = CONFIG.waveMin;
+$('#limA').textContent = CONFIG.limitMin;
+$('#baseV').textContent = CONFIG.baselineText;
+$('#tgt').style.left = CONFIG.targetPct + '%';
+const tl = $('#tgtL'); tl.style.left = `calc(${CONFIG.targetPct}% + 1px)`; tl.textContent = `State target ${CONFIG.targetPct}%`;
+$('#window').style.width = (CONFIG.surgeWindowMin / CONFIG.waveMin * 100) + '%';
+$('#windowLabel').textContent = `Next ${CONFIG.surgeWindowMin} min`;
+$('#ticks').innerHTML = Array.from({length: CONFIG.waveMin / 5 + 1}, (_, i) => {
+  const m = i * 5, cls = i === 0 ? ' first' : m === CONFIG.waveMin ? ' last' : '';
+  return `<span class="tick${cls}" style="left:${m / CONFIG.waveMin * 100}%">${m === 0 ? 'Now' : m + ' min'}</span>`;
+}).join('');
+if (CONFIG.phone) { $('#callin').hidden = false; $('#phone').textContent = fmtPhone(CONFIG.phone); }
+setSound(false);
+render();
 poll();
-setInterval(poll, 2000);
-setInterval(render, 1000);  // smooth ETA countdown between polls
+setInterval(tick, 250);
+})();
 </script>
 </body>
 </html>
