@@ -156,6 +156,9 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:1.3fr 1fr .95fr;gap:
 .badge.lob.ok{background:var(--green);color:#fff;border-color:var(--green)}
 .badge.ramp{background:#c2410c;color:#fff}
 .card.lobby-ok{background:#eef8f1}
+.impact{display:flex;align-items:baseline;gap:.5rem 1.5rem;flex-wrap:wrap;margin:.6rem 1.25rem 0;padding:.5rem 1rem;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--green);border-radius:4px;font-size:1.05rem;color:var(--text)}
+.impact b{color:var(--green);font-weight:700;font-size:1.2rem}
+.impact .est{font-size:.78rem;color:var(--text3);margin-left:auto}
 .logstrip{display:none;margin:.6rem 1.25rem 0;padding:.45rem .9rem;background:#fff8e1;border:1px solid #f0d58a;border-left:4px solid #d98a00;border-radius:4px;font-size:.92rem;color:#5c4400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .logstrip.on{display:block}
 .logstrip b{font-weight:700;margin-right:.4rem}
@@ -255,6 +258,11 @@ kbd{font-family:inherit;font-size:.74rem;border:1px solid rgba(255,255,255,.45);
   <div class="surge-call" id="surgeCall"></div>
 </section>
 
+<div class="impact" id="impact">
+  <span>Est. ambulance time saved today: <b id="impSaved">0 min</b></span>
+  <span><b id="impReleased">0</b> <span id="impNoun">ambulances</span> released early</span>
+  <span class="est">Estimated: lobby offloads × (average handoff − 5 min)</span>
+</div>
 <div class="logstrip" id="logStrip"></div>
 
 <section class="wave">
@@ -663,6 +671,7 @@ function ingest(j) {
   S.surgeSrv = normSurge(j);
   S.statsSrv = normStats(j);
   S.lobbySrv = num(pick(j, ['stats.lobby_approved_count']));
+  S.avgSrv = num(pick(j, ['stats.avg_handoff_min']));
   // latest call_log entry (surge calls, ramp alerts, lobby decisions) shown in a strip
   const log = (j && pick(j, ['call_log'])) || [];
   const strip = $('#logStrip');
@@ -874,7 +883,14 @@ function renderStats(done) {
   p90.textContent = st.p90ms == null ? '–' : mmss(st.p90ms);
   p90.classList.toggle('bad', st.p90ms != null && st.p90ms > LIMIT);
   $('#sMed').textContent = st.medms == null ? '–' : mmss(st.medms);
-  $('#sLobby').textContent = Math.max(S.list.filter(x => x.lobby_status === 'approved').length, S.lobbySrv || 0);
+  const lobbyN = Math.max(S.list.filter(x => x.lobby_status === 'approved').length, S.lobbySrv || 0);
+  $('#sLobby').textContent = lobbyN;
+  // impact strip: saved = lobby_approved_count × max(avg_handoff_min − 5, 0)
+  const avgMin = S.avgSrv != null ? S.avgSrv : (waits.length ? waits.reduce((s, w) => s + w, 0) / waits.length / MIN : 0);
+  const saved = Math.round(lobbyN * Math.max(avgMin - 5, 0));
+  $('#impSaved').textContent = saved >= 60 ? `${Math.floor(saved / 60)} h ${saved % 60} min` : `${saved} min`;
+  $('#impReleased').textContent = lobbyN;
+  $('#impNoun').textContent = lobbyN === 1 ? 'ambulance' : 'ambulances';
 
   const chart = $('#chart');
   const recent = done.filter(x => x.wait_ms != null).slice(0, 16).reverse();
