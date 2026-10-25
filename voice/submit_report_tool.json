@@ -41,6 +41,10 @@
         "vitals_stable": {
           "type": "boolean",
           "description": "Vitals are stable. Always false for critical patients."
+        },
+        "high_risk_complaint": {
+          "type": "boolean",
+          "description": "True if the complaint involves chest pain, stroke, breathing trouble, seizure, bleeding, head injury, trauma, unconsciousness, overdose, or pregnancy. Otherwise false."
         }
       },
       "required": [
@@ -51,7 +55,8 @@
         "eta_min",
         "ambulatory",
         "alert_oriented",
-        "vitals_stable"
+        "vitals_stable",
+        "high_risk_complaint"
       ]
     }
   },
@@ -65,6 +70,190 @@
     {
       "type": "request-start",
       "content": "Logging that with the ER now."
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Lobby-eligible, pending nurse approval. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "gte",
+          "value": "18"
+        },
+        {
+          "param": "ambulatory",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "alert_oriented",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "vitals_stable",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "high_risk_complaint",
+          "operator": "eq",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "critical"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "lt",
+          "value": "18"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "gte",
+          "value": "18"
+        },
+        {
+          "param": "ambulatory",
+          "operator": "eq",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "gte",
+          "value": "18"
+        },
+        {
+          "param": "ambulatory",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "alert_oriented",
+          "operator": "eq",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "gte",
+          "value": "18"
+        },
+        {
+          "param": "ambulatory",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "alert_oriented",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "vitals_stable",
+          "operator": "eq",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "request-complete",
+      "content": "Logged with the ER. Copy, see you soon.",
+      "endCallAfterSpokenEnabled": true,
+      "conditions": [
+        {
+          "param": "acuity",
+          "operator": "eq",
+          "value": "stable"
+        },
+        {
+          "param": "age",
+          "operator": "gte",
+          "value": "18"
+        },
+        {
+          "param": "ambulatory",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "alert_oriented",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "vitals_stable",
+          "operator": "eq",
+          "value": "true"
+        },
+        {
+          "param": "high_risk_complaint",
+          "operator": "eq",
+          "value": "true"
+        }
+      ]
     },
     {
       "type": "request-failed",
