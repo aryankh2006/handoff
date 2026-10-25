@@ -5,8 +5,8 @@ Creates or updates (by name):
   - assistant  "Handoff Paramedic Line"     (from paramedic_assistant_prompt.md)
   - assistant  "Handoff Charge Nurse Alert" (from nurse_assistant_prompt.md)
   - a free Vapi phone number, inbound -> Paramedic Line
-  - optional: your Twilio number imported into Vapi for OUTBOUND (free Vapi numbers are inbound only),
-    when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER are set in .env
+  - optional (--import-twilio): your Twilio number imported into Vapi for OUTBOUND. Not needed now:
+    the server calls the nurse through Twilio directly (see server/main.py place_nurse_call).
 Then writes VAPI_PHONE_NUMBER_ID (Twilio number if imported, else the free number) and
 VAPI_NURSE_ASSISTANT_ID into .env.
 Re-run whenever the ngrok URL or a prompt changes.
@@ -144,13 +144,13 @@ for _ in range(15):
 
 # 5. Outbound: import Twilio number (if configured). Inbound calls to it also reach the Paramedic Line.
 outbound = phone
-if TWILIO_SID and TWILIO_TOKEN and TWILIO_NUMBER:
+if "--import-twilio" in sys.argv and TWILIO_SID and TWILIO_TOKEN and TWILIO_NUMBER:
     twilio_body = {"provider": "twilio", "number": TWILIO_NUMBER, "name": "Handoff Outbound (Twilio)",
                    "twilioAccountSid": TWILIO_SID, "twilioAuthToken": TWILIO_TOKEN,
                    "assistantId": paramedic["id"]}
     outbound = upsert("/phone-number", TWILIO_NUMBER, twilio_body, key=lambda x: x.get("number"))
 else:
-    print("TWILIO_* not set in .env: outbound uses the free Vapi number, which Vapi blocks (inbound only)")
+    print("Skipping Twilio import (server calls the nurse via Twilio directly; pass --import-twilio to import)")
 
 update_env({"VAPI_PHONE_NUMBER_ID": outbound["id"], "VAPI_NURSE_ASSISTANT_ID": nurse["id"]})
 
