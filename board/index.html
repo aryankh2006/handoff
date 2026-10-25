@@ -143,6 +143,22 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:1.3fr 1fr .95fr;gap:
 .bar{flex:1;position:relative;height:.42rem;background:var(--track);border-radius:2px;overflow:hidden}
 .bar .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--green);transition:width .5s linear}
 .barl{font-size:.76rem;color:var(--text3);white-space:nowrap}
+.card.has-lobby{grid-template-areas:"top cd" "pt cd" "meta act" "lobby lobby"}
+.lobby{grid-area:lobby;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:.2rem;padding:.5rem .75rem;background:var(--blue-bg);border:1px solid var(--blue-line);border-radius:4px;font-size:.92rem;color:var(--navy)}
+.lobby b{font-weight:700}
+.lobby .sp{flex:1}
+.lobby .btn{padding:.28rem .8rem;font-size:.88rem}
+.lobby .btn.approve{background:var(--blue);color:#fff}
+.lobby .btn.approve:hover{background:var(--blue-dark);border-color:var(--blue-dark)}
+.lobby.approved{background:var(--green-bg);border-color:#bfe3c8;color:var(--green)}
+.lobby.denied{background:#f1f0ec;border-color:var(--line);color:var(--text2)}
+.badge.lob{background:var(--amber-bg);color:var(--amber);border:1px solid #f0cf8a}
+.badge.lob.ok{background:var(--green);color:#fff;border-color:var(--green)}
+.badge.ramp{background:#c2410c;color:#fff}
+.card.lobby-ok{background:#eef8f1}
+.logstrip{display:none;margin:.6rem 1.25rem 0;padding:.45rem .9rem;background:#fff8e1;border:1px solid #f0d58a;border-left:4px solid #d98a00;border-radius:4px;font-size:.92rem;color:#5c4400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.logstrip.on{display:block}
+.logstrip b{font-weight:700;margin-right:.4rem}
 .card.door.warn .fill{background:#d98a00}
 .card.door.warn .cd{color:var(--amber)}
 .card.door.over{background:#fff6f5}
@@ -239,6 +255,8 @@ kbd{font-family:inherit;font-size:.74rem;border:1px solid rgba(255,255,255,.45);
   <div class="surge-call" id="surgeCall"></div>
 </section>
 
+<div class="logstrip" id="logStrip"></div>
+
 <section class="wave">
   <div class="wave-head">
     <span class="title">Arrivals in the next <span id="waveMin">30</span> minutes</span>
@@ -271,6 +289,7 @@ kbd{font-family:inherit;font-size:.74rem;border:1px solid rgba(255,255,255,.45);
       <dl class="dl">
         <dt>90th percentile wait</dt><dd id="sP90">–</dd>
         <dt>Median wait</dt><dd id="sMed">–</dd>
+        <dt>Lobby offloads<small>crews freed without a bed</small></dt><dd id="sLobby">0</dd>
         <dt id="baseK">UCSD Medical Center, Jan 2026<small>90th percentile, state data</small></dt><dd id="baseV" class="bad">81 min</dd>
       </dl>
       <div class="chart-l">Recent handoff times</div>
@@ -331,6 +350,7 @@ const S = {
   seen: new Set(), firstLoad: true, newUntil: new Map(),
   overrides: new Map(),     // id -> status we set by clicking (until the server agrees)
   localTimes: new Map(),    // id -> {arrived_at, handed_off_at} stamped on click
+  lobby: new Map(),         // id -> {status, at} lobby decision clicked here (until the server agrees)
   firstSeen: new Map(),     // 'id|status' -> local ms when first seen in that status
   etaAnchors: new Map(),
   wasSurge: false, sound: false, sig: '',
@@ -505,7 +525,12 @@ function normalize(a, i, hint) {
     status: status0, eta_at, created_at: created,
     arrived_at: parseTime(pick(a, K.arrived)), handed_off_at: parseTime(pick(a, K.handed)),
     quote, wait_ms: null,
+    lobby_eligible: pick(a, ['lobby_eligible']) === true,
+    lobby_status: (() => { const v = pick(a, ['lobby_status']); return v == null ? null : String(v).toLowerCase(); })(),
+    lobby_at: parseTime(pick(a, ['lobby_decided_at'])),
+    ramp_alert: pick(a, ['ramp_alert']) === true,
   };
+  if (x.lobby_eligible && !x.lobby_status) x.lobby_status = 'pending';
   const wm = num(pick(a, K.wait)), ws = num(pick(a, K.waitSec));
   if (wm != null) x.wait_ms = wm * MIN; else if (ws != null) x.wait_ms = ws * 1000;
   return x;
@@ -559,11 +584,16 @@ function normSurge(j) {
   }
   if (out.call === true) out.call = 'completed';
   if (out.call === false) out.call = null;
-  // contract.md: call_log = [{time, to, message}], newest entry = latest nurse alert
+  // contract.md: call_log = [{time, to, message}]. Entries with to "(board)" are lobby decisions, not nurse calls.
   const log = pick(j, ['call_log']);
-  if (Array.isArray(log) && log.length && out.call == null) {
-    const times = log.map(e => parseTime(e && e.time)).filter(Boolean);
-    if (times.length) { out.call = 'alerted'; out.calledAt = Math.max(...times); }
+  if (Array.isArray(log) && out.call == null) {
+    const calls = log.filter(e => e && e.to !== '(board)' && parseTime(e.time))
+      .sort((a, b) => parseTime(b.time) - parseTime(a.time));
+    if (calls.length) {
+      const msg = String(calls[0].message || '');
+      out.call = /ERROR/i.test(msg) ? 'failed' : /DRY RUN/i.test(msg) ? 'dryrun' : 'called';
+      out.calledAt = parseTime(calls[0].time);
+    }
   }
   return Object.keys(out).length ? out : null;
 }
@@ -632,6 +662,16 @@ function ingest(j) {
   S.rawList = [...byId.values()];
   S.surgeSrv = normSurge(j);
   S.statsSrv = normStats(j);
+  S.lobbySrv = num(pick(j, ['stats.lobby_approved_count']));
+  // latest call_log entry (surge calls, ramp alerts, lobby decisions) shown in a strip
+  const log = (j && pick(j, ['call_log'])) || [];
+  const strip = $('#logStrip');
+  const last = Array.isArray(log) ? log.filter(e => e && parseTime(e.time)).sort((a, b) => parseTime(b.time) - parseTime(a.time))[0] : null;
+  if (last) {
+    const to = last.to === '(board)' ? 'Board' : last.to ? 'Call to ' + last.to : 'Alert';
+    strip.innerHTML = `<b>${esc(hm(parseTime(last.time)))} · ${esc(to)}</b>${esc(last.message || '')}`;
+    strip.classList.add('on');
+  } else strip.classList.remove('on');
 
   // forget clicks for ambulances the server no longer has (after /reset)
   const ids = new Set(S.rawList.map(x => x.id));
@@ -659,9 +699,11 @@ function merge() {
     if (RANK[x.status] >= 1 && x.arrived_at == null) x.arrived_at = lt.arrived_at ?? seen('arrived');
     if (RANK[x.status] >= 2 && x.handed_off_at == null) x.handed_off_at = lt.handed_off_at ?? seen('handed_off');
     if (x.status === 'handed_off' && x.wait_ms == null && x.arrived_at != null) x.wait_ms = x.handed_off_at - x.arrived_at;
+    const lo = S.lobby.get(x.id);
+    if (lo) { if (x.lobby_status === lo.status) S.lobby.delete(x.id); else { x.lobby_status = lo.status; x.lobby_at = x.lobby_at ?? lo.at; } }
     return x;
   });
-  const sig = JSON.stringify(S.list.map(x => [x.id, x.status, x.unit, x.age, x.sex, x.complaint, x.acuityText, x.eta_at && Math.round(x.eta_at / 1000), x.arrived_at, x.handed_off_at, x.quote, x.wait_ms]));
+  const sig = JSON.stringify(S.list.map(x => [x.id, x.status, x.unit, x.age, x.sex, x.complaint, x.acuityText, x.eta_at && Math.round(x.eta_at / 1000), x.arrived_at, x.handed_off_at, x.quote, x.wait_ms, x.lobby_status, x.lobby_at, x.ramp_alert]));
   if (sig !== S.sig) { S.sig = sig; render(); }
 }
 
@@ -695,16 +737,39 @@ async function doAction(id, act, btn) {
   try { await sendAction(id, act); }
   catch (e) { toast(`The server didn't save "${act === 'arrived' ? 'Arrived' : 'Handed off'}" (${e.message}). The board still shows it.`); }
 }
+async function doLobby(id, decision, btn) {
+  if (btn) btn.disabled = true;
+  S.lobby.set(id, {status: decision, at: now()});
+  Sound.click();
+  merge();
+  if (CONFIG.demo) { Demo.lobby(id, decision); return; }
+  const path = `/lobby/${encodeURIComponent(id)}/${decision === 'approved' ? 'approve' : 'deny'}`;
+  try {
+    const r = await fetch(CONFIG.apiBase + path, {method: 'POST'});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) { toast(`The server didn't save the lobby decision (${e.message}). The board still shows it.`); }
+}
 async function resetAll() {
   if (!confirm('Reset the board? This clears every ambulance.')) return;
   if (CONFIG.demo) Demo.reset();
   else { try { await fetch(CONFIG.apiBase + CONFIG.resetPath, {method: 'POST'}); } catch (e) { toast('Reset failed: ' + e.message); } }
-  S.overrides.clear(); S.localTimes.clear(); S.firstSeen.clear(); S.etaAnchors.clear(); S.seen.clear(); S.newUntil.clear();
+  S.lobby.clear(); S.overrides.clear(); S.localTimes.clear(); S.firstSeen.clear(); S.etaAnchors.clear(); S.seen.clear(); S.newUntil.clear();
   S.firstLoad = true; S.wasSurge = false; S.sig = '';
 }
 
 /* ---------- rendering ---------- */
-const badge = x => x.acuityText ? `<span class="badge ${x.acls}">${esc(x.acuityText.slice(0, 20))}</span>` : '';
+const badge = x => (x.acuityText ? `<span class="badge ${x.acls}">${esc(x.acuityText.slice(0, 20))}</span>` : '')
+  + (x.lobby_status === 'pending' ? '<span class="badge lob">Lobby eligible · awaiting nurse</span>'
+    : x.lobby_status === 'approved' ? `<span class="badge lob ok">→ Lobby · approved${x.lobby_at ? ' ' + hm(x.lobby_at) : ''}</span>` : '')
+  + (x.ramp_alert && x.status === 'arrived' ? '<span class="badge ramp">25+ min on ramp · offload now</span>' : '');
+function lobbyBlock(x) {
+  const id = esc(x.id);
+  if (x.lobby_status === 'pending') return `<div class="lobby"><span><b>Lobby eligible.</b> Passed the Door-to-Lobby screen. Nurse decides:</span><span class="sp"></span>
+    <button class="btn approve" data-act="lobby_approve" data-id="${id}">Approve lobby</button><button class="btn" data-act="lobby_deny" data-id="${id}">Deny</button></div>`;
+  if (x.lobby_status === 'approved') return `<div class="lobby approved"><span><b>Approved for lobby</b>${x.lobby_at ? ' at ' + hm(x.lobby_at) : ''}. Patient waits in the lobby, so the crew can leave.</span></div>`;
+  return '';
+}
+const lobbyCls = x => x.lobby_status === 'pending' ? ' has-lobby' : x.lobby_status === 'approved' ? ' has-lobby lobby-ok' : '';
 function ptLine(x) {
   const parts = [];
   if (x.age != null) parts.push(esc(typeof x.age === 'number' ? x.age + ' y/o' : x.age));
@@ -714,21 +779,23 @@ function ptLine(x) {
 }
 function cardIn(x) {
   const isNew = (S.newUntil.get(x.id) || 0) > Date.now();
-  return `<article class="card in${isNew ? ' new' : ''}" data-id="${esc(x.id)}" data-eta="${x.eta_at ?? ''}">
+  return `<article class="card in${isNew ? ' new' : ''}${lobbyCls(x)}" data-id="${esc(x.id)}" data-eta="${x.eta_at ?? ''}">
     <div class="top"><span class="unit">${esc(x.unit)}</span>${badge(x)}${isNew ? '<span class="badge new">New call</span>' : ''}</div>
     <div class="cdbox"><div class="cd" data-cd>–</div><div class="cdl" data-cdl>${x.eta_at ? 'ETA ' + hm(x.eta_at) : 'ETA unknown'}</div></div>
     <div class="pt">${ptLine(x)}</div>
     <div class="meta">${x.quote ? `<div class="quote">“${esc(x.quote)}”</div>` : x.created_at ? 'Called in at ' + hm(x.created_at) : ''}</div>
     <div class="act"><button class="btn arrive" data-act="arrived" data-id="${esc(x.id)}">Arrived</button></div>
+    ${lobbyBlock(x)}
   </article>`;
 }
 function cardDoor(x) {
-  return `<article class="card door" data-id="${esc(x.id)}" data-since="${x.arrived_at}">
+  return `<article class="card door${lobbyCls(x)}" data-id="${esc(x.id)}" data-since="${x.arrived_at}">
     <div class="top"><span class="unit">${esc(x.unit)}</span>${badge(x)}<span class="badge over">Over ${CONFIG.limitMin} min</span></div>
     <div class="cdbox"><div class="cd" data-wait>0:00</div><div class="cdl">Waiting since ${hm(x.arrived_at)}</div></div>
     <div class="pt">${ptLine(x)}</div>
     <div class="meta"><div class="barwrap"><div class="bar"><div class="fill" data-fill></div></div><span class="barl">${CONFIG.limitMin} min limit</span></div></div>
     <div class="act"><button class="btn handoff" data-act="handed_off" data-id="${esc(x.id)}">Handed off</button></div>
+    ${lobbyBlock(x)}
   </article>`;
 }
 function rowDone(x) {
@@ -807,6 +874,7 @@ function renderStats(done) {
   p90.textContent = st.p90ms == null ? '–' : mmss(st.p90ms);
   p90.classList.toggle('bad', st.p90ms != null && st.p90ms > LIMIT);
   $('#sMed').textContent = st.medms == null ? '–' : mmss(st.medms);
+  $('#sLobby').textContent = Math.max(S.list.filter(x => x.lobby_status === 'approved').length, S.lobbySrv || 0);
 
   const chart = $('#chart');
   const recent = done.filter(x => x.wait_ms != null).slice(0, 16).reverse();
@@ -823,7 +891,7 @@ function callLabel(c) {
   if (c == null) return null;
   const s = String(c).toLowerCase();
   if (/fail|busy|no.?answer|error|cancel|declin/.test(s)) return {cls: 'bad', text: 'Call to charge nurse failed. Page them manually.'};
-  if (s === 'alerted') return {cls: 'ok', text: 'Charge nurse alerted'};
+  if (s === 'dryrun') return {cls: 'ok', text: 'Nurse alert logged (test mode)'};
   if (/complet|answer|done|ended|success|notified|deliver|connected|true|^ok$|^called$|^sent$/.test(s)) return {cls: 'ok', text: 'Charge nurse called'};
   if (/call|ring|queue|progress|dial|initiat|pending|start/.test(s)) return {cls: 'live', text: 'Calling the charge nurse…'};
   return {cls: 'live', text: 'Charge nurse: ' + String(c)};
@@ -933,7 +1001,9 @@ function toggleFs() { if (!document.fullscreenElement) document.documentElement.
 
 $('#main').addEventListener('click', e => {
   const b = e.target.closest('.btn[data-act]'); if (!b) return;
-  doAction(b.dataset.id, b.dataset.act, b);
+  if (b.dataset.act === 'lobby_approve') doLobby(b.dataset.id, 'approved', b);
+  else if (b.dataset.act === 'lobby_deny') doLobby(b.dataset.id, 'denied', b);
+  else doAction(b.dataset.id, b.dataset.act, b);
 });
 $('#soundBtn').addEventListener('click', () => setSound(!S.sound));
 $('#fsBtn').addEventListener('click', toggleFs);
@@ -959,7 +1029,7 @@ const Demo = (() => {
   const PLAN = [
     {at: 2, unit: 'Medic 14', age: 62, sex: 'M', cc: 'Chest pain', ac: 'Stable', eta: 12, said: 'Medic 14, 62-year-old, chest pain, stable, 12 minutes out'},
     {at: 8, unit: 'Medic 7', age: 45, sex: 'F', cc: 'Car crash, leg injury', ac: 'Unstable', eta: 9, said: 'Medic 7, 45 female, car crash, leg injury, unstable, 9 minutes out'},
-    {at: 14, unit: 'Engine 22', age: 81, sex: 'F', cc: 'Fall, hip pain', ac: 'Stable', eta: 17, said: 'Engine 22, 81-year-old female, fell at home, hip pain, stable, 17 minutes out'},
+    {at: 14, unit: 'Medic 22', age: 34, sex: 'F', cc: 'Ankle injury', ac: 'Stable', eta: 17, lobby: true, said: 'Medic 22, 34 female, twisted ankle, stable, walking, alert, normal vitals, 17 minutes out'},
     {at: 20, unit: 'Medic 31', age: 29, sex: 'M', cc: 'Asthma attack', ac: 'Serious', eta: 6, said: 'Medic 31, 29 male, asthma attack, serious, 6 minutes out'},
   ];
   const EXTRA = [['Medic 18', 54, 'M', 'Diabetic, confused', 'Stable'], ['Rescue 9', 71, 'F', 'Stroke symptoms', 'Critical'], ['Medic 40', 33, 'F', 'Overdose', 'Serious'], ['Engine 3', 67, 'M', 'Shortness of breath', 'Stable']];
@@ -973,7 +1043,12 @@ const Demo = (() => {
   }
   function add(p) {
     const id = 'd' + (++rnd);
-    store.set(id, {id, unit: p.unit, age: p.age, sex: p.sex, chief_complaint: p.cc, acuity: p.ac, status: 'en_route', eta_minutes: p.eta, created_at: iso(Date.now()), transcript: p.said});
+    store.set(id, {id, unit: p.unit, age: p.age, sex: p.sex, chief_complaint: p.cc, acuity: p.ac, status: 'en_route', eta_minutes: p.eta, created_at: iso(Date.now()), transcript: p.said,
+      lobby_eligible: !!p.lobby, lobby_status: p.lobby ? 'pending' : null, lobby_decided_at: null});
+  }
+  function lobby(id, decision) {
+    const r = store.get(id); if (!r) return;
+    r.lobby_status = decision; r.lobby_decided_at = iso(Date.now());
   }
   function state() {
     const el = (Date.now() - t0) / 1000;
@@ -995,7 +1070,7 @@ const Demo = (() => {
     add({unit: e[0], age: e[1], sex: e[2], cc: e[3], ac: e[4], eta: 4 + (rnd * 7) % 15, said: `${e[0]}, ${e[1]}-year-old, ${e[3].toLowerCase()}, ${e[4].toLowerCase()}, on the way`});
   }
   reset();
-  return {state, act, reset, addRandom};
+  return {state, act, reset, addRandom, lobby};
 })();
 
 /* ---------- boot ---------- */
