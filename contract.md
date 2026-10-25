@@ -17,6 +17,9 @@ Do not change it without telling the whole team first.
 | `status`      | `"incoming"` \| `"arrived"` \| `"handed_off"` | starts `"incoming"`                |
 | `arrived_at`  | ISO 8601 string \| null                      | set by `POST /arrive/{id}`         |
 | `handoff_at`  | ISO 8601 string \| null                      | set by `POST /handoff/{id}`        |
+| `lobby_eligible`   | bool                                     | Door-to-Lobby screen passed (see below) |
+| `lobby_status`     | `null` \| `"pending"` \| `"approved"` \| `"denied"` | `"pending"` if eligible, else `null` |
+| `lobby_decided_at` | ISO 8601 string \| null                  | set by approve/deny                |
 
 ```json
 {
@@ -50,18 +53,26 @@ Two accepted body formats:
 
 Invalid `acuity` defaults to `"stable"`; missing/invalid ints default to `0`.
 
+Optional Door-to-Lobby screening booleans (plain JSON or tool-call args): `ambulatory`, `alert_oriented`,
+`vitals_stable` (default `false`; `true`/`"yes"`/`1` accepted). **Eligible** = `acuity == "stable"` AND `age >= 18`
+AND all 3 true AND `complaint` contains none of: chest, stroke, breath, seizure, bleed, head, trauma, unconscious,
+overdose, pregnant. Eligible → `lobby_eligible=true`, `lobby_status="pending"`, and the Vapi tool result adds
+"Lobby-eligible, pending nurse approval." A nurse always makes the final call on the board.
+
 ### `GET /state`
 ```json
 {
   "ambulances": [ /* Ambulance objects, newest first */ ],
   "surge": false,
   "call_log": [{"time": "ISO string", "to": "+15551234567", "message": "SURGE WARNING: ..."}],
-  "stats": {"avg_handoff_min": 22.5, "p90_handoff_min": 41.0, "over_30_count": 1, "total": 2}
+  "stats": {"avg_handoff_min": 22.5, "p90_handoff_min": 41.0, "over_30_count": 1, "total": 2, "lobby_approved_count": 0}
 }
 ```
 
 ### `POST /arrive/{id}`  → sets `status="arrived"`, `arrived_at=now`. Returns ambulance. 404 if unknown.
 ### `POST /handoff/{id}` → sets `status="handed_off"`, `handoff_at=now` (also sets `arrived_at` if missing). Returns ambulance. 404 if unknown.
+### `POST /lobby/{id}/approve` / `POST /lobby/{id}/deny` → set `lobby_status` to `"approved"`/`"denied"` and
+`lobby_decided_at=now`, append a `call_log` entry with `to: "(board)"` (no phone call). Returns ambulance. 404 if unknown.
 ### `POST /reset`        → clears everything and reloads the simulated seed: 10 completed handoffs (shift history for
 the stats), Medic 1 already `arrived` ~32 min ago (demo: click "Handed off" on it), and Medic 3 `incoming`. Returns `/state`.
 ### `GET|POST /twiml/surge` → TwiML (XML) Twilio fetches when the nurse answers: the latest surge warning, said twice.
@@ -90,4 +101,5 @@ the stats), Medic 1 already `arrived` ~32 min ago (demo: click "Handed off" on i
 ## Stats
 - Handoff minutes = `handoff_at - arrived_at` (only ambulances with both set).
 - `avg_handoff_min`, `p90_handoff_min` (rounded to 1 decimal, `0` when no data),
-  `over_30_count` (handoffs > 30 min — California AB 40 standard), `total` (number of completed handoffs).
+  `over_30_count` (handoffs > 30 min — California AB 40 standard), `total` (number of completed handoffs),
+  `lobby_approved_count` (ambulances with `lobby_status == "approved"`).

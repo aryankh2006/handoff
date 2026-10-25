@@ -75,7 +75,33 @@ def make_ambulance(unit, age, complaint, acuity, eta_min, reported_at=None) -> d
         "status": "incoming",
         "arrived_at": None,
         "handoff_at": None,
+        "lobby_eligible": False,
+        "lobby_status": None,  # null | "pending" | "approved" | "denied"
+        "lobby_decided_at": None,
     }
+
+
+# Door-to-Lobby: complaints that always stay on the stretcher (substring match, lowercase).
+LOBBY_EXCLUDE = ("chest", "stroke", "breath", "seizure", "bleed", "head", "trauma", "unconscious", "overdose", "pregnant")
+
+
+def as_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    return str(v).strip().lower() in ("true", "yes", "y", "1")
+
+
+def lobby_eligible(a: dict, args: dict) -> bool:
+    """Stable adult, all 3 screening answers yes, and no high-risk complaint. A nurse still approves."""
+    complaint = a["complaint"].lower()
+    return (
+        a["acuity"] == "stable"
+        and a["age"] >= 18
+        and all(as_bool(args.get(k, False)) for k in ("ambulatory", "alert_oriented", "vitals_stable"))
+        and not any(word in complaint for word in LOBBY_EXCLUDE)
+    )
 
 
 def seed():
@@ -138,8 +164,10 @@ def compute_stats() -> dict:
         if a["arrived_at"] and a["handoff_at"]:
             delta = datetime.fromisoformat(a["handoff_at"]) - datetime.fromisoformat(a["arrived_at"])
             mins.append(delta.total_seconds() / 60)
+    lobby_approved = sum(1 for a in ambulances.values() if a.get("lobby_status") == "approved")
     if not mins:
-        return {"avg_handoff_min": 0, "p90_handoff_min": 0, "over_30_count": 0, "total": 0}
+        return {"avg_handoff_min": 0, "p90_handoff_min": 0, "over_30_count": 0, "total": 0,
+                "lobby_approved_count": lobby_approved}
     mins.sort()
     p90 = mins[max(0, math.ceil(0.9 * len(mins)) - 1)]  # nearest-rank
     return {
@@ -147,6 +175,7 @@ def compute_stats() -> dict:
         "p90_handoff_min": round(p90, 1),
         "over_30_count": sum(1 for m in mins if m > HANDOFF_LIMIT_MIN),
         "total": len(mins),
+        "lobby_approved_count": lobby_approved,
     }
 
 
@@ -257,6 +286,9 @@ def parse_args(call: dict) -> dict:
 
 def add_report(args: dict) -> dict:
     a = make_ambulance(args.get("unit"), args.get("age"), args.get("complaint"), args.get("acuity"), args.get("eta_min"))
+    if lobby_eligible(a, args):
+        a["lobby_eligible"] = True
+        a["lobby_status"] = "pending"
     ambulances[a["id"]] = a
     return a
 
@@ -283,6 +315,7 @@ async def report(request: Request, background: BackgroundTasks):
             "result": (
                 f"Got it. {a['unit']}, {a['age']} year old, {a['complaint']}, {a['acuity']}, "
                 f"ETA {a['eta_min']} minutes. The ER has been notified."
+                + (" Lobby-eligible, pending nurse approval." if a["lobby_eligible"] else "")
             ),
         })
     check_surge(background)
@@ -313,6 +346,27 @@ def handoff(amb_id: str):
     a["arrived_at"] = a["arrived_at"] or iso(now())
     a["handoff_at"] = iso(now())
     return a
+
+
+def lobby_decide(amb_id: str, decision: str) -> dict:
+    a = ambulances.get(amb_id)
+    if not a:
+        raise HTTPException(404, "ambulance not found")
+    a["lobby_status"] = decision
+    a["lobby_decided_at"] = iso(now())
+    verb = "approved -> LOBBY" if decision == "approved" else "denied, stays on stretcher"
+    call_log.append({"time": a["lobby_decided_at"], "to": "(board)", "message": f"Lobby {verb}: {a['unit']}, {a['age']} y/o, {a['complaint']}"})
+    return a
+
+
+@app.post("/lobby/{amb_id}/approve")
+def lobby_approve(amb_id: str):
+    return lobby_decide(amb_id, "approved")
+
+
+@app.post("/lobby/{amb_id}/deny")
+def lobby_deny(amb_id: str):
+    return lobby_decide(amb_id, "denied")
 
 
 @app.api_route("/twiml/surge", methods=["GET", "POST"])
