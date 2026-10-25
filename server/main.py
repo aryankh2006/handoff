@@ -36,6 +36,16 @@ SURGE_COOLDOWN = timedelta(minutes=10)
 STALE_AFTER_MIN = 15
 HANDOFF_LIMIT_MIN = 30
 
+# Ramp escalation (OFF unless RAMP_ESCALATION=1): board-only alert when an ambulance has been
+# "arrived" for RAMP_ALERT_MIN with no handoff. DEMO_SPEED multiplies ramp wait time only
+# (DEMO_SPEED=60 -> 25 min ~= 25 sec); surge, ETA and stats always use real time.
+RAMP_ESCALATION = os.getenv("RAMP_ESCALATION", "").strip().lower() in ("1", "true", "yes")
+try:
+    DEMO_SPEED = max(1.0, float(os.getenv("DEMO_SPEED", "1") or 1))
+except ValueError:
+    DEMO_SPEED = 1.0
+RAMP_ALERT_MIN = 25
+
 app = FastAPI(title="Handoff")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -78,6 +88,7 @@ def make_ambulance(unit, age, complaint, acuity, eta_min, reported_at=None) -> d
         "lobby_eligible": False,
         "lobby_status": None,  # null | "pending" | "approved" | "denied"
         "lobby_decided_at": None,
+        "ramp_alert": False,  # true once a ramp escalation alert has fired for this ambulance
     }
 
 
@@ -134,6 +145,7 @@ def seed():
     # so a 30+ min handoff is logged live and "Over 30" ticks up.
     wall = make_ambulance("Medic 1", 77, "chest pain", "stable", 9, t - timedelta(minutes=41))
     wall.update(status="arrived", arrived_at=iso(t - timedelta(minutes=32)))
+    wall["ramp_alert"] = True  # already past 25 min at reset: don't fire a ramp alert before the demo starts
     ambulances[wall["id"]] = wall
     # Currently incoming (counts toward a surge; goes stale ~27 min after /reset).
     inc = make_ambulance("Medic 3", 54, "shortness of breath", "critical", 12)
@@ -322,8 +334,29 @@ async def report(request: Request, background: BackgroundTasks):
     return {"results": results}
 
 
+def ramp_wait_min(a: dict) -> float:
+    """Minutes on the ramp, sped up by DEMO_SPEED (ramp escalation only)."""
+    return (now() - datetime.fromisoformat(a["arrived_at"])).total_seconds() / 60 * DEMO_SPEED
+
+
+def check_ramp():
+    """Runs on every board poll. Board-only alert (no phone call, so it never collides with the surge call)."""
+    if not RAMP_ESCALATION:
+        return
+    for a in ambulances.values():
+        if a["status"] == "arrived" and a["arrived_at"] and not a.get("ramp_alert") and ramp_wait_min(a) >= RAMP_ALERT_MIN:
+            a["ramp_alert"] = True
+            left = HANDOFF_LIMIT_MIN - RAMP_ALERT_MIN
+            call_log.append({
+                "time": iso(now()), "to": "(board)",
+                "message": f"RAMP ALERT: {a['unit']} has waited {RAMP_ALERT_MIN} minutes. "
+                           f"Offload in the next {left} to stay under the {HANDOFF_LIMIT_MIN}-minute limit.",
+            })
+
+
 @app.get("/state")
 def get_state():
+    check_ramp()
     return state()
 
 

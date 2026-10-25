@@ -20,6 +20,7 @@ Do not change it without telling the whole team first.
 | `lobby_eligible`   | bool                                     | Door-to-Lobby screen passed (see below) |
 | `lobby_status`     | `null` \| `"pending"` \| `"approved"` \| `"denied"` | `"pending"` if eligible, else `null` |
 | `lobby_decided_at` | ISO 8601 string \| null                  | set by approve/deny                |
+| `ramp_alert`       | bool                                     | true once a ramp escalation alert fired (see below) |
 
 ```json
 {
@@ -97,6 +98,15 @@ the stats), Medic 1 already `arrived` ~32 min ago (demo: click "Handed off" on i
   the provider's reason.
 - **Twilio trial limits (demo):** only verified numbers can receive calls, and each call starts with a Twilio
   trial message — the person answering presses any key, then the warning plays.
+
+## Ramp escalation (OFF by default)
+- Enabled only when `RAMP_ESCALATION=1`. Checked on every `GET /state` (board poll).
+- An ambulance with `status == "arrived"` for **≥ 25 min** and no handoff gets `ramp_alert=true` and ONE `call_log`
+  entry (`to: "(board)"`): "RAMP ALERT: Medic X has waited 25 minutes. Offload in the next 5 to stay under the
+  30-minute limit." **Board-only, never a phone call.**
+- `DEMO_SPEED` (default 1) speeds up ramp wait time only: `DEMO_SPEED=60` → 25 min ≈ 25 sec. Surge, ETA and stats
+  always use real time.
+- Seeded Medic 1 (already past 25 min at `/reset`) starts with `ramp_alert=true`, so nothing fires before the demo.
 
 ## Stats
 - Handoff minutes = `handoff_at - arrived_at` (only ambulances with both set).
