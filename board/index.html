@@ -677,8 +677,10 @@ function ingest(j) {
   const strip = $('#logStrip');
   const last = Array.isArray(log) ? log.filter(e => e && parseTime(e.time)).sort((a, b) => parseTime(b.time) - parseTime(a.time))[0] : null;
   if (last) {
-    const to = last.to === '(board)' ? 'Board' : last.to ? 'Call to ' + last.to : 'Alert';
-    strip.innerHTML = `<b>${esc(hm(parseTime(last.time)))} · ${esc(to)}</b>${esc(last.message || '')}`;
+    const to = last.to === '(board)' ? 'Board' : last.to ? 'Call to charge nurse' : 'Alert';
+    // never show raw phone numbers on screen: mask any number in the message to its last 4 digits
+    const msg = String(last.message || '').replace(/\+?\d[\d\s().-]{7,}\d/g, m => '+1 ••• ••• ' + m.replace(/\D/g, '').slice(-4));
+    strip.innerHTML = `<b>${esc(hm(parseTime(last.time)))} · ${esc(to)}</b>${esc(msg)}`;
     strip.classList.add('on');
   } else strip.classList.remove('on');
 
