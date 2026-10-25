@@ -2,7 +2,7 @@
   "type": "function",
   "function": {
     "name": "submit_report",
-    "description": "Submit an incoming ambulance report to the ER board. Call once you have unit, age, complaint, acuity and ETA.",
+    "description": "Submit an incoming ambulance report to the ER board. Call once you have unit, age, complaint, acuity, ETA, and (for stable patients) the three lobby-screen answers.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -29,6 +29,18 @@
         "eta_min": {
           "type": "integer",
           "description": "Minutes until arrival at the ER"
+        },
+        "ambulatory": {
+          "type": "boolean",
+          "description": "Patient can walk. Always false for critical patients."
+        },
+        "alert_oriented": {
+          "type": "boolean",
+          "description": "Patient is alert and oriented. Always false for critical patients."
+        },
+        "vitals_stable": {
+          "type": "boolean",
+          "description": "Vitals are stable. Always false for critical patients."
         }
       },
       "required": [
@@ -36,7 +48,10 @@
         "age",
         "complaint",
         "acuity",
-        "eta_min"
+        "eta_min",
+        "ambulatory",
+        "alert_oriented",
+        "vitals_stable"
       ]
     }
   },
