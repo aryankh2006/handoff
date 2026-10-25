@@ -69,7 +69,7 @@
   "messages": [
     {
       "type": "request-start",
-      "content": "Logging that with the ER now."
+      "content": ""
     },
     {
       "type": "request-complete",
