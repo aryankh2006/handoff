@@ -58,8 +58,8 @@ header{display:flex;align-items:center;gap:1.4rem;padding:.7rem 1.5rem;backgroun
 .wordmark{font-size:1.55rem;font-weight:700;letter-spacing:-.01em}
 .sub{font-size:.95rem;color:#c9d6e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .grow{flex:1}
-.callin{font-size:.95rem;color:#c9d6e8;white-space:nowrap}
-.callin b{color:#fff;font-weight:700;margin-left:.25rem}
+.callin{font-size:1.15rem;font-weight:600;color:#c9d6e8;white-space:nowrap;padding:.3rem .9rem;border:1px solid rgba(255,255,255,.35);border-radius:4px;background:rgba(255,255,255,.08)}
+.callin b{color:#fff;font-weight:700;font-size:1.5rem;margin-left:.35rem}
 .status{display:inline-flex;align-items:center;gap:.4rem;font-size:.92rem;font-weight:600;color:#9be3ad;white-space:nowrap}
 .status .dot{width:.55rem;height:.55rem;border-radius:50%;background:currentColor}
 .status.off{color:#ffd27a}
@@ -225,7 +225,7 @@ kbd{font-family:inherit;font-size:.74rem;border:1px solid rgba(255,255,255,.45);
     <span class="sub" id="hospital">ER arrivals</span>
   </div>
   <div class="grow"></div>
-  <div class="callin" id="callin" hidden>Paramedics call<b id="phone"></b></div>
+  <div class="callin" id="callin" hidden>Paramedics: call<b id="phone"></b></div>
   <span class="status off" id="conn"><span class="dot"></span><span id="connText">Connecting…</span></span>
   <div class="hbtns"><button class="hbtn" id="soundBtn">Sound: off</button><button class="hbtn" id="fsBtn">Full screen</button></div>
   <div class="clock" id="clock"></div>
@@ -317,7 +317,7 @@ const CONFIG = {
   targetPct: 90,          // AB 40: 90% of the time
   baselineText: '81 min', // UCSD Medical Center, Jan 2026 state data
   hospital: qs.get('hospital') || 'ER arrivals · UC San Diego Medical Center',
-  phone: qs.get('phone') || '',
+  phone: qs.get('phone') || '+16198262078',   // team Vapi paramedic line
   demo: qs.has('demo'),
   debug: qs.has('debug'),
 };
@@ -928,7 +928,7 @@ function toast(msg) {
   const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
   $('#toasts').appendChild(d); setTimeout(() => d.remove(), 6000);
 }
-function fmtPhone(p) { const d = String(p).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : p; }
+function fmtPhone(p) { const d = String(p).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p).trim(); }
 function toggleFs() { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.(); }
 
 $('#main').addEventListener('click', e => {
